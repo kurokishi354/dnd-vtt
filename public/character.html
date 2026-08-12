@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Character Sheet — DnD VTT</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  /* ---- Online Players Panel ---- */
+  .online-panel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .online-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:12px; font-size:12px; background:var(--parchment-dark); border:1px solid var(--gold); }
+  .online-pill .dot { width:8px; height:8px; border-radius:50%; background:#4caf50; flex-shrink:0; }
+  .online-pill .dot.offline { background:#aaa; }
+
+  /* ---- Attribute Trait (ganti Class Trait) ---- */
+  .attr-trait-row { display:flex; align-items:center; gap:6px; padding:4px 0; border-bottom:1px dashed rgba(220,190,120,.3); }
+  .attr-trait-row:last-child { border-bottom:none; }
+  .attr-trait-label { flex:1; font-size:13px; }
+  .attr-trait-pct { width:62px; flex:none; }
+  .attr-trait-bonus { width:62px; flex:none; font-size:11px; color:var(--ink-soft); }
+  .attr-trait-applies { font-size:11px; color:var(--gold); }
+
+  /* ---- Companion tab ---- */
+  .companion-card { border:1px solid var(--gold); border-radius:8px; padding:10px; margin-bottom:10px; position:relative; }
+  .companion-card-title { font-weight:700; color:var(--navy); font-size:14px; margin-bottom:6px; }
+  .companion-remove { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--crimson-bright); font-size:18px; cursor:pointer; }
+
+  /* ---- Inventory dynamic ---- */
+  .inv-row-v2 { border:1px dashed var(--gold); border-radius:6px; padding:8px; margin-bottom:6px; }
+  .inv-row-v2 .inv-header { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  .inv-row-v2 .inv-header input[type=text] { flex:1; }
+
+  /* ---- Map tab sub-tabs ---- */
+  .map-tab-bar { display:flex; gap:4px; margin-bottom:8px; flex-wrap:wrap; }
+  .map-tab-bar button { padding:5px 12px; border-radius:4px 4px 0 0; border:1px solid var(--gold); background:var(--parchment-dark); cursor:pointer; font-size:13px; }
+  .map-tab-bar button.active { background:var(--gold); color:#fff; }
+
+  /* ---- Zoom controls ---- */
+  .map-zoom-bar { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .map-zoom-bar button { padding:4px 10px; font-size:13px; }
+
+  /* ---- Fog of war ---- */
+  .fog-layer { position:absolute; inset:0; background:rgba(20,20,30,0.82); pointer-events:none; z-index:4; }
+  .fog-revealed { clip-path: none; }
+
+  /* ---- Name tag on token ---- */
+  .token-nametag { position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.78); color:#f0e0a0; font-size:10px; white-space:nowrap; padding:2px 5px; border-radius:3px; pointer-events:none; }
+  .token-img { width:100%; height:100%; border-radius:50%; object-fit:cover; }
+
+  /* ---- Chat color ---- */
+  .chat-log .entry.dm { color: #1a4fa0; font-weight:600; }
+  .chat-log .entry.system { color: #2a7a2a; font-style:italic; }
+  .chat-log .entry.player { color: #222; }
+  .chat-log .entry.roll { color: #7b3fa0; font-weight:700; }
+  .chat-log .entry.damage { color: #c0392b; font-weight:700; }
+  .chat-log .entry.heal { color: #229922; font-weight:600; }
+  .chat-log .entry .from { font-weight:700; }
+
+  /* ---- Status effect conditions ---- */
+  .condition-fatal { color:var(--crimson-bright); font-weight:700; }
+  .condition-dot { color:#c47c00; }
+
+  /* ---- Skills merged (active+passive) ---- */
+  .skill-section-label { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); margin:6px 0 2px; border-bottom:1px solid rgba(220,190,120,.3); padding-bottom:2px; }
+</style>
+</head>
+<body>
+
+<div id="itemToast" class="item-toast"></div>
+
+<div id="musicBar" class="music-bar">
+  <button type="button" id="btnMusicUnlock" class="small">🔊 Aktifkan Musik</button>
+  <span id="musicBarTrack" class="hint">Tidak ada musik.</span>
+  <input type="range" id="musicBarVolume" min="0" max="1" step="0.05" value="0.8" title="Volume (hanya di device-mu)">
+  <button type="button" id="btnMusicMute" class="small secondary">🔊</button>
+  <audio id="playerMusicPlayer" style="display:none;"></audio>
+  <div id="ytPlayer" style="position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none;"></div>
+</div>
+
+<div class="sheet sheet-with-musicbar" style="max-width:1500px;">
+  <div class="topbar">
+    <h1>📜 <span id="charNameDisplay">Character Sheet</span></h1>
+    <div class="actions">
+      <span class="badge" id="connBadge">menghubungkan…</span>
+      <span class="code-badge" id="codeBadge">----</span>
+      <button id="btnSave">💾 Simpan</button>
+      <div class="icon-btn-group">
+        <button id="btnExportSheet" class="icon-btn icon-export" title="Export" aria-label="Export sheet">⬇</button>
+        <button id="btnImportSheet" class="icon-btn icon-import" title="Import" aria-label="Import sheet">⬆</button>
+      </div>
+      <input type="file" id="importSheetFile" accept="application/json" style="display:none;">
+      <a href="/" class="btn secondary" style="text-decoration:none; display:inline-flex; align-items:center;">Keluar</a>
+    </div>
+  </div>
+
+  <!-- Online players bar -->
+  <div class="panel" style="padding:8px 12px; margin-bottom:8px;">
+    <span class="hint" style="margin-right:8px;">🧑‍🤝‍🧑 Online:</span>
+    <div class="online-panel" id="onlinePlayersBar"><span class="hint">Memuat…</span></div>
+  </div>
+
+  <div class="page-tabs">
+    <button class="active" id="tabBtnSheet">📜 Sheet</button>
+    <button id="tabBtnBattle">⚔ Battle</button>
+    <button id="tabBtnMap">🗺 Peta &amp; Battle</button>
+    <button id="tabBtnCompanion">🐾 Companion</button>
+  </div>
+
+  <!-- ===== TAB: SHEET ===== -->
+  <div id="tab-sheet">
+  <div class="panel">
+    <div class="grid grid-3">
+      <div class="field"><label>Nama Karakter</label><input type="text" id="f_nama_karakter"></div>
+      <div class="field"><label>Kelas <span class="hint">— pilih di panel Kelas &amp; Rank Up</span></label><input type="text" id="f_kelas" readonly></div>
+      <div class="field"><label>Ras</label><input type="text" id="f_ras"></div>
+    </div>
+    <div class="grid grid-3">
+      <div class="field"><label>Alignment</label><input type="text" id="f_alignment"></div>
+      <div class="field"><label>Level (LV) <span class="hint">— diatur DM</span></label><input type="number" id="f_lv" readonly></div>
+      <div class="field"><label>EXP <span class="hint">— diatur DM</span></label><input type="text" id="f_exp" readonly></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>EXP Kelas <span class="hint">— untuk evolusi kelas</span></label><input type="text" id="f_kelas_exp" readonly></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">🎓 Kelas &amp; Rank Up</div>
+    <p class="hint" id="classHint">DM belum membuka kelas apa pun untukmu.</p>
+    <div class="row" id="classPickRow" style="display:none;">
+      <select id="f_class_pick" style="flex:1;"></select>
+      <button type="button" id="btnChangeClass" class="small" style="white-space:nowrap;">Pilih / Ganti Kelas</button>
+    </div>
+    <p class="hint" style="margin-top:6px;">Mengganti kelas akan mengganti seluruh Active/Passive/Ultimate Skill-mu sesuai kelas yang dipilih.</p>
+    <div id="classPreview" style="margin-top:8px;"></div>
+  </div>
+
+  <div class="grid grid-3" style="align-items:start;">
+
+    <!-- ===== KOLOM 1: ABILITY + STATUS ===== -->
+    <div>
+      <div class="panel">
+        <div class="panel-header">🧭 Ability Scores</div>
+        <div id="abilityContainer" class="grid" style="grid-template-columns:1fr 1fr; gap:8px;"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🛡 Pertahanan &amp; Status</div>
+        <div class="row">
+          <div class="field"><label>AC (Armor Class)</label><input type="number" id="f_ac"></div>
+          <div class="field"><label>Initiative</label><input type="number" id="f_initiative"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Max HP</label><input type="number" id="f_max_hp"></div>
+          <div class="field"><label>Current HP</label><input type="number" id="f_current_hp"></div>
+          <div class="field"><label>Temp HP</label><input type="number" id="f_temp_hp"></div>
+        </div>
+        <div class="hp-bar-wrap" style="margin-bottom:10px;"><div class="hp-bar" id="hpBar" style="width:100%;"></div></div>
+        <div class="row">
+          <div class="field"><label>MP Max</label><input type="number" id="f_mp_max"></div>
+          <div class="field"><label>MP Current</label><input type="number" id="f_mp_current"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>SP Max</label><input type="number" id="f_sp_max"></div>
+          <div class="field"><label>SP Current</label><input type="number" id="f_sp_current"></div>
+        </div>
+        <label style="margin-top:6px;">Condition</label>
+        <div class="checkbox-list" id="conditionContainer"></div>
+
+        <div class="row" style="margin-top:10px;">
+          <div class="field"><label>Proficiency Bonus</label><input type="text" id="f_proficiency_bonus"></div>
+          <div class="field"><label>Passive Perception</label><input type="text" id="f_passive_perception"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Hit Dice</label><input type="text" id="f_hit_dice"></div>
+          <div class="field"><label>Total</label><input type="text" id="f_hit_dice_total"></div>
+          <div class="field" style="max-width:110px;"><label>Inspiration</label>
+            <input type="checkbox" id="f_inspiration" style="width:22px; height:22px; margin-top:4px;">
+          </div>
+        </div>
+
+        <label style="margin-top:6px;">Death Count</label>
+        <div class="death-count" id="deathCountContainer"></div>
+
+        <div class="field" style="margin-top:10px;"><label>Goal / Tujuan</label><textarea id="f_goal" rows="2"></textarea></div>
+      </div>
+    </div>
+
+    <!-- ===== KOLOM 2: EQUIPMENT + INVENTORY ===== -->
+    <div>
+      <div class="panel">
+        <div class="panel-header">⚔ Equipment (2 Slot)</div>
+        <div id="equipmentContainer"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🧤 Equipment Gears</div>
+        <div id="gearsContainer"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🗡 Extra Slot Weapon (2 Slot)</div>
+        <div id="extraWeaponContainer"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🎒 Item Inventory <span class="hint" id="invCountLabel" style="color:var(--gold-bright); text-transform:none;"></span></div>
+        <p class="hint" style="margin-bottom:6px;">Item bisa digunakan langsung di Battle — pilih item lalu tekan "Pakai" saat giliran.</p>
+        <div id="inventoryContainer" class="inv-list"></div>
+        <button type="button" id="btnAddInvSlot" class="secondary small" style="margin-top:6px;">+ Tambah Slot Item</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🪙 Gold</div>
+        <input type="text" id="f_gold" placeholder="0">
+      </div>
+    </div>
+
+    <!-- ===== KOLOM 3: SKILL + BUFF/DEBUFF + TRAIT ===== -->
+    <div>
+      <div class="panel">
+        <div class="panel-header">⚡ Skill (Active ×5 + Passive ×2 + Ultimate ×2)</div>
+        <p class="hint" style="margin-bottom:6px;">Active skill bisa pakai langsung di battle. Pasif aktif otomatis. Status effect yang terpasang ke skill akan otomatis terceklis di Condition jika terkena.</p>
+        <div class="skill-section-label">❌ Active Skill (5 slot)</div>
+        <div id="skillActiveContainer"></div>
+        <div class="skill-section-label">✳ Passive Skill (2 slot)</div>
+        <div id="skillPassiveContainer"></div>
+        <div class="skill-section-label">🔥 Ultimate (2 slot)</div>
+        <div id="skillUltimateContainer"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🌀 Buff / Debuff &amp; Efek Aktif</div>
+        <p class="hint" style="margin-bottom:6px;">
+          Pilih "Efek ke Stat" &amp; isi "Jumlah" (boleh minus). DOT = damage per giliran, HEAL = regen per giliran.
+          Kosongkan "Sisa Giliran" buat efek permanen. Status condition terkena efek akan otomatis terceklis.
+        </p>
+        <div id="buffContainer"></div>
+        <button type="button" id="btnAddBuffSheet" class="secondary small" style="margin-top:6px;">+ Tambah Efek</button>
+        <div id="buffTotalsSheet" class="hint" style="margin-top:8px; line-height:1.5;"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🐉 Trait</div>
+        <div id="raceTraitContainer"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🔥 Atribut Elemen (%)</div>
+        <p class="hint" style="margin-bottom:6px;">
+          Masukkan persentase elemen karakter. Nilai positif = bonus damage keluar &amp; resistansi masuk. Negatif = kelemahan.
+          Contoh: Fire 30% → damage api +30%, kena api -30% damage diterima.
+        </p>
+        <div id="classTraitContainer"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🗒 Catatan Lain</div>
+        <textarea id="f_catatan_lain" rows="5"></textarea>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /tab-sheet -->
+
+  <!-- ===== TAB: BATTLE ===== -->
+  <div id="tab-battle" style="display:none;">
+    <div class="page-tabs sub-tabs">
+      <button class="active" id="battleSubTabBattle">⚔ Battle</button>
+      <button id="battleSubTabDice">🎲 Roll Dadu &amp; Chat</button>
+    </div>
+
+    <div id="battle-sub-battle">
+    <div class="grid grid-2" style="align-items:start;">
+      <div>
+        <div class="panel">
+          <div class="panel-header">🧍 Status Battle Karaktermu</div>
+          <div class="status-bar-row">
+            <label>AC</label>
+            <input type="number" id="bt_ac" readonly style="max-width:70px;">
+            <span class="hint" id="bt_ac_eff" style="display:none; margin-left:6px; color:var(--gold);"></span>
+          </div>
+          <div class="status-bar-row">
+            <label>HP</label>
+            <input type="number" id="bt_current_hp">
+            <span class="sep">/</span>
+            <input type="number" id="bt_max_hp" readonly>
+            <div class="mini-bar-wrap hp"><div class="mini-bar-fill" id="btHpFill"></div></div>
+            <span class="hint" id="bt_hp_max_eff" style="display:none; margin-left:6px; color:var(--gold);"></span>
+          </div>
+          <div class="status-bar-row">
+            <label>MP</label>
+            <input type="number" id="bt_mp_current">
+            <span class="sep">/</span>
+            <input type="number" id="bt_mp_max" readonly>
+            <div class="mini-bar-wrap mp"><div class="mini-bar-fill" id="btMpFill"></div></div>
+            <span class="hint" id="bt_mp_max_eff" style="display:none; margin-left:6px; color:var(--gold);"></span>
+          </div>
+          <div class="status-bar-row">
+            <label>SP</label>
+            <input type="number" id="bt_sp_current">
+            <span class="sep">/</span>
+            <input type="number" id="bt_sp_max" readonly>
+            <div class="mini-bar-wrap sp"><div class="mini-bar-fill" id="btSpFill"></div></div>
+            <span class="hint" id="bt_sp_max_eff" style="display:none; margin-left:6px; color:var(--gold);"></span>
+          </div>
+          <p class="hint" style="margin:2px 0 8px;">HP/MP/SP yang diubah di sini otomatis tersimpan ke sheet.</p>
+          <div id="btSkillList" class="battle-skill-list"></div>
+        </div>
+
+        <!-- Buff/Debuff aktif langsung dari tab Battle -->
+        <div class="panel">
+          <div class="panel-header">🌀 Buff/Debuff Aktif (dari Sheet)</div>
+          <p class="hint" style="margin-bottom:6px;">Buff/debuff yang kamu atur di tab Sheet bisa langsung digunakan di battle — efek stat, DOT, HEAL, dll.</p>
+          <div id="btBuffList" class="battle-skill-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">⚔ Equipment, Extra Weapon &amp; Inventory Battle</div>
+          <p class="hint" style="margin-bottom:6px;">Klik item inventory untuk memakai efeknya di battle langsung.</p>
+          <div id="btEquipList" class="battle-skill-list"></div>
+          <div id="btInventoryBattle" class="battle-skill-list"></div>
+          <div id="btCompanionBlock" class="battle-skill-list"></div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="panel-header">⚔ Battle &amp; Giliran <span class="badge" id="pRoundBadge">Round 1</span></div>
+          <p class="hint" id="pTurnHint" style="margin-top:2px;"></p>
+          <p class="hint" id="pFatalHint" style="margin-top:2px; color:var(--crimson-bright); display:none;"></p>
+          <div id="pBattleList"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">🎯 Aksi Roll (Damage / Heal / Buff / Debuff / Ultimate)</div>
+          <p class="hint" style="margin-bottom:6px;">Pilih target &amp; jenis aksi, isi formula dadu (mis. 1d8+3), lalu Roll. Modifier elemen dari Atribut otomatis diperhitungkan.</p>
+          <div class="row">
+            <div class="field" style="margin:0;"><label>Target</label><select id="pActionTarget"></select></div>
+            <div class="field" style="margin:0;"><label>Jenis Aksi</label>
+              <select id="pActionType">
+                <option value="damage">⚔ Damage</option>
+                <option value="heal">💚 Heal</option>
+                <option value="buff">🌀 Buff</option>
+                <option value="debuff">🌀 Debuff</option>
+                <option value="ultimate">🔥 Ultimate</option>
+                <option value="mana_regen">🔵 Regen Mana</option>
+                <option value="sp_regen">🟢 Regen SP</option>
+                <option value="ac_buff">🛡 Buff AC</option>
+                <option value="ac_debuff">🛡 Debuff AC</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <div class="field" style="margin:0;"><label>Elemen DMG</label>
+              <select id="pDmgElement">
+                <option value="">- (tanpa elemen)</option>
+                <option value="fire">🔥 Fire</option>
+                <option value="ice">❄ Ice</option>
+                <option value="lightning">⚡ Lightning</option>
+                <option value="poison">☠ Poison</option>
+                <option value="dark">🌑 Dark</option>
+                <option value="light">☀ Light</option>
+                <option value="physical">⚔ Physical</option>
+                <option value="magic">🔮 Magic</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <input type="text" id="pActionFormula" placeholder="Formula dadu, mis. 1d8+3">
+            <button id="btnPActionRoll" class="small">🎲 Roll &amp; Terapkan</button>
+          </div>
+          <p class="hint" id="pActionStatus" style="margin-top:4px;"></p>
+        </div>
+      </div>
+    </div>
+    </div><!-- /battle-sub-battle -->
+
+    <div id="battle-sub-dice" style="display:none;">
+      <div class="panel">
+        <div class="panel-header">🎲 Roll Dadu &amp; Chat <button type="button" class="small secondary" id="btnClearDiceLog">Bersihkan Log</button></div>
+        <p class="hint" style="margin-bottom:6px;">Semua roll kelihatan oleh semua orang. Roll DM ada badge kunci kalau disembunyikan.</p>
+        <div class="dice-quick-row" id="pDiceQuickRow"></div>
+        <div class="row">
+          <input type="text" id="pDiceFormula" placeholder="mis. 2d6+3">
+          <button id="btnPRollDice" class="small">Roll</button>
+        </div>
+        <div class="chat-log" id="pDiceLog"></div>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="pChatInput" placeholder="Ketik pesan… (atau langsung ketik mis. 2d4 untuk roll)">
+          <button id="btnPSendChat" class="small">Kirim</button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /tab-battle -->
+
+  <!-- ===== TAB: PETA & BATTLE (digabung) ===== -->
+  <div id="tab-map" style="display:none;">
+    <div class="map-tab-bar" id="mapTabBar">
+      <!-- tabs ditambah dinamis kalau DM kirim beberapa map -->
+      <button class="active" data-maptab="main" id="mapTabMain">🗺 Peta Utama</button>
+    </div>
+    <div class="panel">
+      <div class="panel-header">🗺 Peta Pertempuran</div>
+      <div class="map-zoom-bar">
+        <button id="btnMapZoomIn" class="small secondary">🔍+</button>
+        <button id="btnMapZoomOut" class="small secondary">🔍−</button>
+        <button id="btnMapZoomReset" class="small secondary">↺ Reset</button>
+        <span class="hint" id="mapZoomLabel">100%</span>
+        <label class="hint" style="margin-left:auto; display:flex; align-items:center; gap:4px;">
+          <input type="checkbox" id="pFogToggle" style="width:auto;"> Tampilkan Fog of War
+        </label>
+      </div>
+      <div class="map-wrap" id="pMapWrap" style="overflow:hidden; position:relative; cursor:grab;">
+        <div id="pMapInner" style="position:absolute; transform-origin:0 0; will-change:transform;">
+          <div class="map-grid-overlay" id="pGridOverlay"></div>
+          <div id="pFogLayer" class="fog-layer" style="display:none;"></div>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (berwarna emas) bisa kamu geser sendiri. Pinch/scroll untuk zoom.</p>
+    </div>
+  </div><!-- /tab-map -->
+
+  <!-- ===== TAB: COMPANION ===== -->
+  <div id="tab-companion" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">🐾 Companion &amp; Summon</div>
+      <p class="hint" style="margin-bottom:8px;">
+        Tab ini untuk semua entitas yang join ke party atau battle — summon player, NPC yang join, companion, dll.
+        DM bisa menambahkan companion dari panel DM. Player bisa mengedit HP/MP/SP companion-nya di sini.
+        Companion juga tampil di tab Battle untuk digunakan.
+      </p>
+      <div id="companionList"><p class="hint">Belum ada companion/summon. DM akan menambahkannya untukmu.</p></div>
+      <button type="button" id="btnAddCompanion" class="secondary small" style="margin-top:6px;">+ Tambah Companion Manual</button>
+    </div>
+  </div><!-- /tab-companion -->
+
+</div><!-- /sheet -->
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/character.js"></script>
+</body>
+</html>
