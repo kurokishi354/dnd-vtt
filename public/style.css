@@ -297,22 +297,28 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* ---------- shared: map, tokens, battle/turn tracker ---------- */
 .map-wrap {
   position: relative; width: 100%; aspect-ratio: 16/10;
-  background: #1b2b1f; border: 3px solid var(--gold); border-radius: 8px;
+  background: #14161c; border: 1px solid #3a3d46; border-radius: 8px;
   overflow: hidden; background-size: contain; background-repeat: no-repeat; background-position: center;
   max-height: 78vh;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+  background-size: 24px 24px, 24px 24px;
 }
 .map-grid-overlay { position: absolute; inset: 0; pointer-events: none; }
 .token {
   position: absolute; width: 40px; height: 40px; border-radius: 50%;
-  border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.5);
+  border: 2px solid #fff; box-shadow: 0 3px 10px rgba(0,0,0,.65), 0 0 0 2px rgba(0,0,0,.3);
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; color: #fff;
   cursor: default; transform: translate(-50%, -50%);
   user-select: none; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  transition: box-shadow .15s ease;
 }
 .token.draggable { cursor: grab; }
 .token.draggable:active { cursor: grabbing; }
-.token.mine { box-shadow: 0 0 0 3px var(--gold-bright), 0 2px 6px rgba(0,0,0,.5); }
+.token.draggable:hover { box-shadow: 0 3px 10px rgba(0,0,0,.65), 0 0 0 3px rgba(255,255,255,.35); }
+.token.mine { box-shadow: 0 0 0 3px var(--gold-bright), 0 3px 10px rgba(0,0,0,.65); }
 
 .mini-bar-wrap { flex:1; height:10px; border:1px solid var(--gold); border-radius:6px; overflow:hidden; background:var(--parchment-dark); }
 .mini-bar-fill { height:100%; width:0%; transition:width .2s ease; }
@@ -649,9 +655,10 @@ button.secondary { background: rgba(255,255,255,.25); box-shadow: none; }
 
 /* Map wrap */
 .map-wrap {
-  border: 2px solid var(--gold); border-radius: 8px;
-  background: #1a1a2e; min-height: 300px;
+  border: 1px solid #3a3d46; border-radius: 8px;
+  background: #14161c; min-height: 300px;
   overflow: hidden; position: relative;
+  box-shadow: inset 0 0 40px rgba(0,0,0,.6);
 }
 .map-grid-overlay { pointer-events: none; }
 

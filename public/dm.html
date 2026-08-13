@@ -25,8 +25,17 @@
   /* Map zoom */
   .map-zoom-bar { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
 
-  /* Fog of war on DM side */
-  .fog-layer-dm { position:absolute; inset:0; background:rgba(20,20,30,0.72); pointer-events:none; z-index:4; }
+  /* Fog of war on DM side (canvas, dilukis lewat brush) */
+  .fog-layer-dm { position:absolute; inset:0; z-index:4; pointer-events:none; width:100%; height:100%; }
+
+  /* ===== VTT-style map canvas (Foundry/Roll20-ish) ===== */
+  .vtt-canvas { background:#14161c; border:1px solid #3a3d46; border-radius:8px; box-shadow:inset 0 0 40px rgba(0,0,0,.6); }
+  .vtt-fog-toolbar { background:#1c1e26; border:1px solid #3a3d46; border-radius:6px; padding:8px 10px; }
+  .vtt-fog-toolbar .hint { color:#c9c2a8; }
+  .vtt-fog-toolbar button#btnFogBrush.active { background:var(--gold-bright); color:#1c1e26; border-color:var(--gold-bright); }
+  .map-zoom-bar { background:#1c1e26; border:1px solid #3a3d46; border-radius:6px; padding:6px 10px; }
+  .map-zoom-bar .hint { color:#c9c2a8; }
+  .vtt-zoom-label { margin-left:auto; font-weight:700; color:var(--gold-bright); }
 
   /* Token name tag */
   .token-nametag { position:absolute; bottom:calc(100% + 2px); left:50%; transform:translateX(-50%); background:rgba(0,0,0,.8); color:#f0e0a0; font-size:10px; white-space:nowrap; padding:2px 5px; border-radius:3px; pointer-events:none; z-index:10; }
@@ -42,6 +51,23 @@
   .list-item .mini-hp .hp-bar-wrap { height: 8px; }
   .list-item .mini-bars { display:flex; flex-direction:column; gap:2px; margin-top:3px; }
   .list-item .mini-bar-wrap { height: 6px; }
+
+  /* Pemain: kartu penuh biar semua info (HP/MP/SP/AC/kelas/gold) kelihatan langsung tanpa buka modal */
+  .player-full-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px,1fr)); gap:10px; }
+  .player-card {
+    border:1px solid var(--gold); border-radius:8px; padding:10px;
+    background:#fffdf7; cursor:pointer; transition:box-shadow .15s ease;
+  }
+  .player-card:hover { box-shadow:0 2px 10px rgba(0,0,0,.15); background:var(--parchment-dark); }
+  .player-card-head { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .player-card-head .pc-name { font-weight:700; font-size:14px; flex:1; }
+  .player-card .pc-meta { font-size:11px; color:var(--ink-soft); margin-bottom:6px; }
+  .player-card .pc-bars { display:flex; flex-direction:column; gap:4px; }
+  .player-card .pc-bar-row { display:flex; align-items:center; gap:6px; font-size:10px; }
+  .player-card .pc-bar-row label { width:20px; flex:none; font-weight:700; }
+  .player-card .pc-bar-row .mini-bar-wrap { height:8px; }
+  .player-card .pc-bar-row .pc-bar-val { width:52px; flex:none; text-align:right; color:var(--ink-soft); }
+  .player-card .pc-foot { display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:11px; color:var(--ink-soft); }
 
   /* Data table styles */
   .data-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -117,119 +143,18 @@
 
   <div class="page-tabs">
     <button class="active" id="tabBtnDmMain">🐉 Utama</button>
+    <button id="tabBtnDmPlayers">🧑 Pemain</button>
+    <button id="tabBtnDmNpc">👹 NPC</button>
+    <button id="tabBtnDmClasses">🎓 Kelas</button>
+    <button id="tabBtnDmShop">🛒 Shop</button>
+    <button id="tabBtnDmMusic">🎵 Musik</button>
     <button id="tabBtnDmBattle">⚔ Battle</button>
     <button id="tabBtnDmMap">🗺 Peta &amp; Battle</button>
   </div>
 
-  <!-- ===== TAB: UTAMA ===== -->
+  <!-- ===== TAB: UTAMA (Log & Dice, Info Sesi, Catatan) ===== -->
   <div id="tab-dm-main">
-  <div class="dm-grid cols-2-narrow">
-    <!-- LEFT SIDEBAR -->
-    <div>
-      <div class="panel">
-        <div class="panel-header">🧑‍🤝‍🧑 Pemain <span id="playerCount" class="badge">0</span></div>
-        <div id="playerList"><p class="hint">Belum ada pemain yang gabung.</p></div>
-      </div>
-
-      <!-- NPC — data table -->
-      <div class="panel">
-        <div class="panel-header">
-          👹 NPC / Enemy
-          <button class="small" id="btnAddNpc">+ Tambah</button>
-        </div>
-        <div class="row" style="margin-bottom:8px;">
-          <button type="button" class="small secondary" id="btnExportNpcs" style="flex:1;">⬇ Export NPC</button>
-          <button type="button" class="small secondary" id="btnImportNpcs" style="flex:1;">⬆ Import NPC</button>
-          <input type="file" id="npcImportFile" accept="application/json" style="display:none;">
-        </div>
-        <div style="overflow-x:auto;">
-          <table class="data-table" id="npcTable">
-            <thead><tr><th>Nama</th><th>Tipe</th><th>AC</th><th>HP</th><th>⚔</th></tr></thead>
-            <tbody id="npcTableBody"><tr><td colspan="5" class="hint">Belum ada NPC.</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Kelas — player isi sendiri, DM hanya EXP requirement -->
-      <div class="panel">
-        <div class="panel-header">
-          🎓 Kelas
-          <button class="small" id="btnAddClass">+ Kelas Baru</button>
-        </div>
-        <p class="hint" style="margin-bottom:6px;">Buat daftar kelas di sini. DM bisa set EXP requirement untuk evolusi kelas. Player akan mengisi skill dan detail kelasnya sendiri di sheet.</p>
-        <div style="overflow-x:auto;">
-          <table class="data-table" id="classTable">
-            <thead><tr><th>Nama Kelas</th><th>EXP Req</th><th>Deskripsi</th><th>Aksi</th></tr></thead>
-            <tbody id="classTableBody"><tr><td colspan="4" class="hint">Belum ada kelas.</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Shop — data table -->
-      <div class="panel">
-        <div class="panel-header">🛒 Shop Item</div>
-        <p class="hint" style="margin-bottom:6px;">Kelola katalog item toko. Import dari Excel (.xlsx/.xls/.csv) dengan kolom: nama, harga, tipe, stok, deskripsi.</p>
-        <div class="row" style="margin-bottom:6px;">
-          <input type="file" id="shopImportFile" accept=".xlsx,.xls,.csv" style="flex:1;">
-          <button type="button" class="small secondary" id="btnShopExportExcel">⬇ Export Excel</button>
-        </div>
-        <div class="battle-add-box">
-          <input type="hidden" id="shop_id">
-          <div class="row">
-            <input type="text" id="shop_nama" placeholder="Nama item" style="flex:2;">
-            <input type="number" id="shop_harga" placeholder="Harga" style="max-width:90px;">
-          </div>
-          <div class="row" style="margin-top:6px;">
-            <input type="text" id="shop_tipe" placeholder="Tipe (mis. Potion, Weapon)">
-            <input type="text" id="shop_stok" placeholder="Stok (kosong = ~)" style="max-width:90px;">
-          </div>
-          <div class="row" style="margin-top:6px;">
-            <input type="text" id="shop_deskripsi" placeholder="Deskripsi">
-          </div>
-          <div class="row" style="margin-top:6px;">
-            <button type="button" class="small" id="btnShopSaveItem" style="flex:1;">💾 Simpan Item</button>
-            <button type="button" class="small secondary" id="btnShopResetForm">Batal Edit</button>
-          </div>
-        </div>
-        <div style="overflow-x:auto;">
-          <table class="data-table" id="shopTable">
-            <thead><tr><th>Nama</th><th>Harga</th><th>Tipe</th><th>Stok</th><th>Aksi</th></tr></thead>
-            <tbody id="shopTableBody"><tr><td colspan="5" class="hint">Belum ada item.</td></tr></tbody>
-          </table>
-        </div>
-        <button type="button" class="secondary small" id="btnShopClear" style="width:100%; margin-top:6px;">Kosongkan Semua Item</button>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header">🎵 Musik</div>
-        <p class="hint" style="margin-bottom:6px;">Musik yang diputar di sini otomatis tersiar ke semua player.</p>
-        <div class="battle-add-box">
-          <div class="row"><input type="text" id="musicName" placeholder="Nama lagu" style="flex:1;"></div>
-          <div class="row"><input type="file" id="musicUpload" accept="audio/*" style="flex:1;"></div>
-          <div class="row">
-            <input type="text" id="musicUrl" placeholder="...atau tempel URL audio / link YouTube" style="flex:1;">
-            <button id="btnMusicAddUrl" class="small">+ Tambah</button>
-          </div>
-        </div>
-        <div id="musicList"><p class="hint">Belum ada lagu.</p></div>
-        <div class="row" style="margin-top:8px; align-items:center;">
-          <button id="btnMusicPauseResume" class="secondary small">⏸ Pause</button>
-          <button id="btnMusicStop" class="secondary small">⏹ Stop</button>
-          <label class="hint" style="display:flex; align-items:center; gap:4px; margin:0;">
-            <input type="checkbox" id="musicLoop" style="width:auto;"> Ulangi
-          </label>
-        </div>
-        <div class="row" style="margin-top:6px; align-items:center;">
-          <label class="hint" style="margin:0;">🔊</label>
-          <input type="range" id="musicVolume" min="0" max="1" step="0.05" value="0.7" style="flex:1;">
-        </div>
-        <p class="hint" id="musicNowPlaying" style="margin-top:6px;">Tidak ada yang diputar.</p>
-        <audio id="musicPlayer" style="display:none;"></audio>
-        <div id="ytPlayer" style="position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none;"></div>
-      </div>
-    </div>
-
-    <!-- RIGHT: LOG & DICE + INFO SESI + CATATAN -->
+  <div class="dm-grid cols-2-even">
     <div>
       <div class="panel">
         <div class="panel-header">🎲 Log &amp; Dice <button type="button" class="small secondary" id="btnClearLog">Bersihkan Log</button></div>
@@ -248,14 +173,165 @@
         <p class="hint">Bagikan link ini ke player:</p>
         <input type="text" id="joinLink" readonly>
       </div>
+    </div>
+    <div>
       <div class="panel">
         <div class="panel-header">📝 Catatan Sesi <span class="badge" id="notesStatus">tersimpan</span></div>
         <p class="hint">Catatan pribadi DM.</p>
-        <textarea id="sessionNotes" rows="10" placeholder="Kejadian penting, keputusan player, plot hook, dll."></textarea>
+        <textarea id="sessionNotes" rows="16" placeholder="Kejadian penting, keputusan player, plot hook, dll."></textarea>
       </div>
     </div>
   </div>
   </div><!-- /tab-dm-main -->
+
+  <!-- ===== TAB: PEMAIN (full width, search + sort, semua info kelihatan) ===== -->
+  <div id="tab-dm-players" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">🧑‍🤝‍🧑 Pemain <span id="playerCount" class="badge">0</span></div>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="text" id="playerSearch" placeholder="🔍 Cari nama pemain / karakter…" style="flex:2;">
+        <select id="playerSort" style="max-width:170px;">
+          <option value="name">Urutkan: Nama</option>
+          <option value="hp">Urutkan: HP %</option>
+          <option value="level">Urutkan: Level</option>
+          <option value="online">Urutkan: Online dulu</option>
+        </select>
+      </div>
+      <div id="playerList" class="player-full-grid"><p class="hint">Belum ada pemain yang gabung.</p></div>
+    </div>
+  </div><!-- /tab-dm-players -->
+
+  <!-- ===== TAB: NPC (full width, search + sort) ===== -->
+  <div id="tab-dm-npc" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">
+        👹 NPC / Enemy
+        <button class="small" id="btnAddNpc">+ Tambah</button>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="text" id="npcSearch" placeholder="🔍 Cari nama / tipe NPC…" style="flex:2;">
+        <select id="npcSort" style="max-width:170px;">
+          <option value="name">Urutkan: Nama</option>
+          <option value="hp">Urutkan: HP</option>
+          <option value="ac">Urutkan: AC</option>
+        </select>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <button type="button" class="small secondary" id="btnExportNpcs" style="flex:1;">⬇ Export NPC</button>
+        <button type="button" class="small secondary" id="btnImportNpcs" style="flex:1;">⬆ Import NPC</button>
+        <input type="file" id="npcImportFile" accept="application/json" style="display:none;">
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="npcTable">
+          <thead><tr><th>Nama</th><th>Tipe</th><th>AC</th><th>HP</th><th>⚔</th></tr></thead>
+          <tbody id="npcTableBody"><tr><td colspan="5" class="hint">Belum ada NPC.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /tab-dm-npc -->
+
+  <!-- ===== TAB: KELAS (full width, search) ===== -->
+  <div id="tab-dm-classes" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">
+        🎓 Kelas
+        <button class="small" id="btnAddClass">+ Kelas Baru</button>
+      </div>
+      <p class="hint" style="margin-bottom:6px;">Buat daftar kelas di sini. DM bisa set EXP requirement untuk evolusi kelas. Player akan mengisi skill dan detail kelasnya sendiri di sheet.</p>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="text" id="classSearch" placeholder="🔍 Cari nama kelas…" style="flex:2;">
+        <select id="classSort" style="max-width:170px;">
+          <option value="name">Urutkan: Nama</option>
+          <option value="exp">Urutkan: EXP Req</option>
+        </select>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="classTable">
+          <thead><tr><th>Nama Kelas</th><th>EXP Req</th><th>Deskripsi</th><th>Aksi</th></tr></thead>
+          <tbody id="classTableBody"><tr><td colspan="4" class="hint">Belum ada kelas.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /tab-dm-classes -->
+
+  <!-- ===== TAB: SHOP (full width, search + sort) ===== -->
+  <div id="tab-dm-shop" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">🛒 Shop Item</div>
+      <p class="hint" style="margin-bottom:6px;">Kelola katalog item toko. Import dari Excel (.xlsx/.xls/.csv) dengan kolom: nama, harga, tipe, stok, deskripsi.</p>
+      <div class="row" style="margin-bottom:6px;">
+        <input type="file" id="shopImportFile" accept=".xlsx,.xls,.csv" style="flex:1;">
+        <button type="button" class="small secondary" id="btnShopExportExcel">⬇ Export Excel</button>
+      </div>
+      <div class="battle-add-box">
+        <input type="hidden" id="shop_id">
+        <div class="row">
+          <input type="text" id="shop_nama" placeholder="Nama item" style="flex:2;">
+          <input type="number" id="shop_harga" placeholder="Harga" style="max-width:90px;">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="shop_tipe" placeholder="Tipe (mis. Potion, Weapon)">
+          <input type="text" id="shop_stok" placeholder="Stok (kosong = ~)" style="max-width:90px;">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="shop_deskripsi" placeholder="Deskripsi">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <button type="button" class="small" id="btnShopSaveItem" style="flex:1;">💾 Simpan Item</button>
+          <button type="button" class="small secondary" id="btnShopResetForm">Batal Edit</button>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="text" id="shopSearch" placeholder="🔍 Cari nama / tipe item…" style="flex:2;">
+        <select id="shopSort" style="max-width:170px;">
+          <option value="name">Urutkan: Nama</option>
+          <option value="price">Urutkan: Harga</option>
+          <option value="type">Urutkan: Tipe</option>
+        </select>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="shopTable">
+          <thead><tr><th>Nama</th><th>Harga</th><th>Tipe</th><th>Stok</th><th>Aksi</th></tr></thead>
+          <tbody id="shopTableBody"><tr><td colspan="5" class="hint">Belum ada item.</td></tr></tbody>
+        </table>
+      </div>
+      <button type="button" class="secondary small" id="btnShopClear" style="width:100%; margin-top:6px;">Kosongkan Semua Item</button>
+    </div>
+  </div><!-- /tab-dm-shop -->
+
+  <!-- ===== TAB: MUSIK (full width, search) ===== -->
+  <div id="tab-dm-music" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">🎵 Musik</div>
+      <p class="hint" style="margin-bottom:6px;">Musik yang diputar di sini otomatis tersiar ke semua player.</p>
+      <div class="battle-add-box">
+        <div class="row"><input type="text" id="musicName" placeholder="Nama lagu" style="flex:1;"></div>
+        <div class="row"><input type="file" id="musicUpload" accept="audio/*" style="flex:1;"></div>
+        <div class="row">
+          <input type="text" id="musicUrl" placeholder="...atau tempel URL audio / link YouTube" style="flex:1;">
+          <button id="btnMusicAddUrl" class="small">+ Tambah</button>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="text" id="musicSearch" placeholder="🔍 Cari judul lagu…" style="flex:1;">
+      </div>
+      <div id="musicList"><p class="hint">Belum ada lagu.</p></div>
+      <div class="row" style="margin-top:8px; align-items:center;">
+        <button id="btnMusicPauseResume" class="secondary small">⏸ Pause</button>
+        <button id="btnMusicStop" class="secondary small">⏹ Stop</button>
+        <label class="hint" style="display:flex; align-items:center; gap:4px; margin:0;">
+          <input type="checkbox" id="musicLoop" style="width:auto;"> Ulangi
+        </label>
+      </div>
+      <div class="row" style="margin-top:6px; align-items:center;">
+        <label class="hint" style="margin:0;">🔊</label>
+        <input type="range" id="musicVolume" min="0" max="1" step="0.05" value="0.7" style="flex:1;">
+      </div>
+      <p class="hint" id="musicNowPlaying" style="margin-top:6px;">Tidak ada yang diputar.</p>
+      <audio id="musicPlayer" style="display:none;"></audio>
+      <div id="ytPlayer" style="position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none;"></div>
+    </div>
+  </div><!-- /tab-dm-music -->
 
   <!-- ===== TAB: BATTLE (terpisah, ringkas) ===== -->
   <div id="tab-dm-battle" style="display:none;">
@@ -354,10 +430,10 @@
             <option value="Poisoned">🔥 Poisoned (DOT)</option>
             <option value="Burn">🔥 Burn (DOT)</option>
             <option value="Bleeding">🔥 Bleeding (DOT)</option>
-            <option value="Silenced">Silenced</option>
-            <option value="Blinded">Blinded</option>
-            <option value="Confused">Confused</option>
-            <option value="Fear">Fear</option>
+            <option value="Silenced">🌀 Silenced (debuff)</option>
+            <option value="Blinded">🌀 Blinded (debuff)</option>
+            <option value="Confused">🌀 Confused (debuff)</option>
+            <option value="Fear">🌀 Fear (debuff)</option>
             <option value="Normal">✓ Normal (hapus semua)</option>
           </select>
           <button id="btnDmApplyStatus" class="small">Terapkan</button>
@@ -421,21 +497,30 @@
       <button id="btnAddToken" class="small">+ Token</button>
     </div>
 
-    <!-- Zoom controls -->
-    <div class="map-zoom-bar">
-      <button id="btnDmMapZoomIn" class="small secondary">🔍+</button>
-      <button id="btnDmMapZoomOut" class="small secondary">🔍−</button>
-      <button id="btnDmMapZoomReset" class="small secondary">↺ Reset</button>
-      <span class="hint" id="dmMapZoomLabel">100%</span>
+    <!-- Fog of War brush controls -->
+    <div class="map-toolbar vtt-fog-toolbar">
+      <button id="btnFogBrush" type="button" class="small">🖌 Kuas Fog: OFF</button>
+      <label class="hint" style="margin:0; display:flex; align-items:center; gap:4px;">
+        Ukuran Kuas <input type="range" id="fogBrushSize" min="1" max="5" value="2">
+      </label>
+      <span class="hint" style="margin:0;">Klik/drag = hapus kabut · Shift+klik/drag = tutup lagi</span>
+      <button id="btnFogRevealAll" type="button" class="small secondary">☀ Buka Semua</button>
+      <button id="btnFogResetAll" type="button" class="small secondary">🌫 Tutup Semua</button>
     </div>
 
-    <div class="map-wrap" id="mapWrap" style="overflow:hidden; position:relative; cursor:grab;">
+    <div class="map-zoom-bar">
+      <span class="hint">Scroll/pinch di peta untuk zoom · drag untuk geser</span>
+      <button id="btnDmMapZoomReset" class="small secondary">↺ Reset View</button>
+      <span class="hint vtt-zoom-label" id="dmMapZoomLabel">100%</span>
+    </div>
+
+    <div class="map-wrap vtt-canvas" id="mapWrap" style="overflow:hidden; position:relative; cursor:grab;">
       <div id="mapInner" style="position:absolute; transform-origin:0 0; will-change:transform;">
         <div class="map-grid-overlay" id="gridOverlay" style="position:absolute; inset:0;"></div>
-        <div id="fogLayerDm" class="fog-layer-dm" style="display:none;"></div>
+        <canvas id="fogLayerDm" class="fog-layer-dm" style="display:none; position:absolute; inset:0;"></canvas>
       </div>
     </div>
-    <p class="hint" style="margin-top:6px;">Drag token untuk memindahkan. Klik kanan token untuk hapus. Scroll/pinch untuk zoom.</p>
+    <p class="hint" style="margin-top:6px;">Drag token untuk memindahkan. Klik kanan token untuk hapus. Scroll/pinch untuk zoom. Aktifkan "Kuas Fog" lalu klik/drag di peta untuk membuka kabut.</p>
   </div>
   </div><!-- /tab-dm-map -->
 

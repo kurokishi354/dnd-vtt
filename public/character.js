@@ -15,20 +15,21 @@ const ABILITIES = [
   ['cha','CHA','Charisma'],['wis','WIS','Wisdom'],['int','INT','Intelligence']
 ];
 
-// CONDITIONS: fatal = tidak bisa giliran, dot = tetap bisa tapi kena efek tiap round
+// CONDITIONS: fatal = tidak bisa giliran, dot = tetap bisa tapi kena efek tiap round,
+// debuff = kondisi negatif yang aktif (bukan fatal, bukan DOT) — mis. Silenced/Blinded/Fear/Confused
 const CONDITIONS = [
-  { name:'Normal', fatal:false, dot:false },
-  { name:'Stunned', fatal:true, dot:false },
-  { name:'Frozen', fatal:true, dot:false },
-  { name:'Silenced', fatal:false, dot:false },
-  { name:'Poisoned', fatal:false, dot:true },
-  { name:'Blinded', fatal:false, dot:false },
-  { name:'Sleep', fatal:true, dot:false },
-  { name:'Confused', fatal:false, dot:false },
-  { name:'Burn', fatal:false, dot:true },
-  { name:'Fear', fatal:false, dot:false },
-  { name:'Paralyzed', fatal:true, dot:false },
-  { name:'Bleeding', fatal:false, dot:true }
+  { name:'Normal', fatal:false, dot:false, debuff:false },
+  { name:'Stunned', fatal:true, dot:false, debuff:false },
+  { name:'Frozen', fatal:true, dot:false, debuff:false },
+  { name:'Silenced', fatal:false, dot:false, debuff:true },
+  { name:'Poisoned', fatal:false, dot:true, debuff:false },
+  { name:'Blinded', fatal:false, dot:false, debuff:true },
+  { name:'Sleep', fatal:true, dot:false, debuff:false },
+  { name:'Confused', fatal:false, dot:false, debuff:true },
+  { name:'Burn', fatal:false, dot:true, debuff:false },
+  { name:'Fear', fatal:false, dot:false, debuff:true },
+  { name:'Paralyzed', fatal:true, dot:false, debuff:false },
+  { name:'Bleeding', fatal:false, dot:true, debuff:false }
 ];
 
 const SKILL_ACTION_OPTIONS = [
@@ -59,6 +60,10 @@ const STATUS_EFFECT_OPTIONS = ['','Stunned','Frozen','Silenced','Poisoned','Blin
 
 // =============================== STATE ===================================
 let invState = [{ checked: false, item: '', desc: '', type: 'misc', qty: 1 }];
+const GEAR_SLOTS = [['helmet','Helmet'],['armor','Armor'],['gloves','Gloves'],['boots','Boots'],
+  ['accessory1','Accessory I'],['accessory2','Accessory II'],['necklace','Necklace'],['artifact','Artifact / Relic']];
+// gearState: tiap slot = { key, item, stat, amount, equipped } — dipakai (equip) untuk nambah status kaya RPG pada umumnya
+let gearState = GEAR_SLOTS.map(([key]) => ({ key, item: '', stat: '', amount: '', equipped: false }));
 let buffState = [];
 let companionState = [];
 let classCatalog = {};
@@ -227,12 +232,61 @@ document.getElementById('btnAddInvSlot').addEventListener('click', () => {
   renderInventory(); scheduleSave();
 });
 
+// =============================== GEARS (equipment slot ala inventory) ===
+const GEAR_STAT_OPTIONS = [
+  ['','- (cuma catatan)'],['ac','AC'],['hp_max','HP Max'],['mp_max','MP Max'],['sp_max','SP Max'],
+  ['atk','ATK'],['def','DEF'],['other','Lainnya']
+];
+function renderGears() {
+  const box = document.getElementById('gearsContainer');
+  if (!box) return;
+  box.innerHTML = GEAR_SLOTS.map(([key, label]) => {
+    const g = gearState.find(x => x.key === key) || { key, item: '', stat: '', amount: '', equipped: false };
+    return `<div class="inv-row-v2" data-gear="${key}">
+      <div class="inv-header">
+        <span class="inv-num">${label}</span>
+        <input type="text" data-gf="item" value="${escapeAttrVal(g.item)}" placeholder="Nama item ${label.toLowerCase()}" style="flex:1;">
+        <label class="hint" style="margin:0; display:flex; align-items:center; gap:3px;">
+          <input type="checkbox" data-gf="equipped" ${g.equipped ? 'checked' : ''} style="width:auto;"> Equip
+        </label>
+      </div>
+      <div class="row" style="margin:0; gap:6px;">
+        <select data-gf="stat" style="max-width:120px;" title="Efek stat saat di-equip">
+          ${GEAR_STAT_OPTIONS.map(([k,l]) => `<option value="${k}" ${g.stat===k?'selected':''}>${l}</option>`).join('')}
+        </select>
+        <input type="text" data-gf="amount" value="${escapeAttrVal(g.amount)}" placeholder="Jumlah (+/-)" style="max-width:110px;">
+        <span class="hint" style="flex:1;">${g.equipped && g.stat ? `✓ Aktif: ${g.stat.toUpperCase()} ${fmtMod(parseFloat(g.amount)||0)}` : ''}</span>
+      </div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-gear]').forEach(wrap => {
+    const key = wrap.dataset.gear;
+    const g = gearState.find(x => x.key === key);
+    wrap.querySelectorAll('[data-gf]').forEach(el => {
+      const ev = () => {
+        const f = el.dataset.gf;
+        g[f] = f === 'equipped' ? el.checked : el.value;
+        renderGears(); renderBuffTotalsSummary(document.getElementById('buffTotalsSheet')); renderBattleStatus(); scheduleSave();
+      };
+      el.addEventListener('input', ev); el.addEventListener('change', ev);
+    });
+  });
+}
+
 // =============================== BUFF/DEBUFF ============================
 function computeBuffTotals() {
   const totals = { ac: 0, hp_max: 0, mp_max: 0, sp_max: 0, atk: 0, def: 0, other: 0 };
   buffState.forEach(b => {
     const stat = b.stat;
     const amount = parseFloat(b.jumlah);
+    if (!stat || !(stat in totals) || isNaN(amount)) return;
+    totals[stat] += amount;
+  });
+  // Gear yang di-equip juga nambah status, kaya item RPG pada umumnya
+  (gearState || []).forEach(g => {
+    if (!g.equipped) return;
+    const stat = g.stat;
+    const amount = parseFloat(g.amount);
     if (!stat || !(stat in totals) || isNaN(amount)) return;
     totals[stat] += amount;
   });
@@ -449,7 +503,7 @@ function renderStaticSections() {
 
   // Conditions
   document.getElementById('conditionContainer').innerHTML =
-    CONDITIONS.map(c => `<label class="${c.fatal?'condition-fatal':c.dot?'condition-dot':''}"><input type="checkbox" class="cond-box" value="${c.name}"> ${c.name}${c.fatal?' ⛔':c.dot?' 🔥':''}</label>`).join('') +
+    CONDITIONS.map(c => `<label class="${c.fatal?'condition-fatal':c.dot?'condition-dot':c.debuff?'condition-debuff':''}"><input type="checkbox" class="cond-box" value="${c.name}"> ${c.name}${c.fatal?' ⛔':c.dot?' 🔥':c.debuff?' 🌀':''}</label>`).join('') +
     `<label>Other: <input type="text" id="f_condition_other" style="width:100px; display:inline-block;"></label>`;
 
   // Death count
@@ -477,11 +531,8 @@ function renderStaticSections() {
       <div class="field"><label>Properties / Catatan</label><textarea id="eq_${i}_catatan" rows="2"></textarea></div>
     </div>`).join('');
 
-  // Gears
-  const gearLabels = [['helmet','Helmet'],['armor','Armor'],['gloves','Gloves'],['boots','Boots'],
-    ['accessory1','Accessory I'],['accessory2','Accessory II'],['necklace','Necklace'],['artifact','Artifact / Relic']];
-  document.getElementById('gearsContainer').innerHTML = gearLabels.map(([key,label]) =>
-    `<div class="field"><label>${label}</label><input type="text" id="gear_${key}"></div>`).join('');
+  // Gears — kaya inventory: isi item, pilih efek stat, "Equip" buat mengaktifkan statusnya
+  renderGears();
 
   // Extra weapon
   document.getElementById('extraWeaponContainer').innerHTML = [0,1].map(i => `
@@ -567,9 +618,15 @@ function updateMod(key) {
 }
 
 function updateHpBar() {
-  const max = parseInt(val('f_max_hp'), 10);
-  const cur = parseInt(val('f_current_hp'), 10);
-  const bar = document.getElementById('hpBar');
+  setResourceBar('hpBar', 'f_current_hp', 'f_max_hp');
+  setResourceBar('mpBar', 'f_mp_current', 'f_mp_max');
+  setResourceBar('spBar', 'f_sp_current', 'f_sp_max');
+}
+function setResourceBar(barId, curId, maxId) {
+  const bar = document.getElementById(barId);
+  if (!bar) return;
+  const max = parseInt(val(maxId), 10);
+  const cur = parseInt(val(curId), 10);
   if (!max || isNaN(max)) { bar.style.width = '100%'; return; }
   bar.style.width = Math.max(0, Math.min(100, (isNaN(cur) ? max : cur) / max * 100)) + '%';
 }
@@ -605,11 +662,6 @@ function fillForm(sheet) {
 
   document.querySelectorAll('.cond-box').forEach(cb => { cb.checked = (sheet.condition || []).includes(cb.value); });
   document.getElementById('f_condition_other').value = sheet.condition_other || '';
-  document.getElementById('f_proficiency_bonus').value = sheet.proficiency_bonus || '';
-  document.getElementById('f_passive_perception').value = sheet.passive_perception || '';
-  document.getElementById('f_inspiration').checked = !!sheet.inspiration;
-  document.getElementById('f_hit_dice').value = sheet.hit_dice || '';
-  document.getElementById('f_hit_dice_total').value = sheet.hit_dice_total || '';
   document.querySelectorAll('.death-box').forEach(cb => { cb.checked = !!(sheet.death_count || [])[+cb.dataset.i]; });
   document.getElementById('f_goal').value = sheet.goal || '';
 
@@ -620,8 +672,19 @@ function fillForm(sheet) {
     const eEl = document.getElementById(`eq_${i}_element`); if (eEl) eEl.value = eq.element || '';
   });
 
-  const gears = sheet.gears || {};
-  Object.keys(gears).forEach(key => { const el = document.getElementById(`gear_${key}`); if (el) el.value = gears[key] || ''; });
+  const gearsSaved = sheet.gears;
+  if (Array.isArray(gearsSaved) && gearsSaved.length) {
+    gearState = GEAR_SLOTS.map(([key]) => {
+      const found = gearsSaved.find(x => x && x.key === key);
+      return found ? { key, item: found.item || '', stat: found.stat || '', amount: found.amount || '', equipped: !!found.equipped } : { key, item: '', stat: '', amount: '', equipped: false };
+    });
+  } else if (gearsSaved && typeof gearsSaved === 'object') {
+    // Backward-compat: format lama cuma { helmet: 'nama', ... } tanpa efek stat
+    gearState = GEAR_SLOTS.map(([key]) => ({ key, item: gearsSaved[key] || '', stat: '', amount: '', equipped: false }));
+  } else {
+    gearState = GEAR_SLOTS.map(([key]) => ({ key, item: '', stat: '', amount: '', equipped: false }));
+  }
+  renderGears();
 
   (sheet.extra_weapon || []).forEach((ew, i) => {
     ['nama','atk_bonus','damage','catatan'].forEach(f => {
@@ -688,9 +751,6 @@ function readForm() {
     ac: val('f_ac'), initiative: val('f_initiative'),
     max_hp: val('f_max_hp'), current_hp: val('f_current_hp'), temp_hp: val('f_temp_hp'),
     mp_max: val('f_mp_max'), mp_current: val('f_mp_current'), sp_max: val('f_sp_max'), sp_current: val('f_sp_current'),
-    proficiency_bonus: val('f_proficiency_bonus'), passive_perception: val('f_passive_perception'),
-    inspiration: document.getElementById('f_inspiration').checked,
-    hit_dice: val('f_hit_dice'), hit_dice_total: val('f_hit_dice_total'),
     death_count: [0,1,2].map(i => document.querySelector(`.death-box[data-i="${i}"]`).checked),
     goal: val('f_goal'),
     equipment: [0,1].map(i => ({
@@ -698,7 +758,7 @@ function readForm() {
       atk_bonus: val(`eq_${i}_atk_bonus`), damage: val(`eq_${i}_damage`),
       catatan: val(`eq_${i}_catatan`), element: val(`eq_${i}_element`)
     })),
-    gears: {},
+    gears: gearState,
     extra_weapon: [0,1].map(i => ({
       nama: val(`ew_${i}_nama`), atk_bonus: val(`ew_${i}_atk_bonus`),
       damage: val(`ew_${i}_damage`), catatan: val(`ew_${i}_catatan`), element: val(`ew_${i}_element`)
@@ -716,9 +776,6 @@ function readForm() {
     sheet.ability[key] = { score: val(`ab_${key}_score`), mod: val(`ab_${key}_mod`), save: val(`ab_${key}_save`) };
   });
   document.querySelectorAll('.cond-box').forEach(cb => { if (cb.checked) sheet.condition.push(cb.value); });
-  ['helmet','armor','gloves','boots','accessory1','accessory2','necklace','artifact'].forEach(key => {
-    sheet.gears[key] = val(`gear_${key}`);
-  });
   const nByCat = { active: 5, passive: 2, ultimate: 2 };
   ['active','passive','ultimate'].forEach(cat => {
     for (let i = 0; i < nByCat[cat]; i++) {
@@ -780,8 +837,9 @@ document.getElementById('importSheetFile').addEventListener('change', (e) => {
 
 // =============================== INIT ===================================
 renderStaticSections();
-document.getElementById('f_max_hp').addEventListener('input', updateHpBar);
-document.getElementById('f_current_hp').addEventListener('input', updateHpBar);
+['f_max_hp','f_current_hp','f_mp_max','f_mp_current','f_sp_max','f_sp_current'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateHpBar);
+});
 document.querySelector('.sheet').addEventListener('input', scheduleSave);
 document.querySelector('.sheet').addEventListener('change', scheduleSave);
 
@@ -836,9 +894,7 @@ socket.on('map-updated', (map) => { battleState.map = map; renderPMap(); });
 socket.on('tokens-updated', (tokens) => { battleState.tokens = tokens; renderPTokens(); });
 
 function initMapControls() {
-  // Zoom buttons
-  document.getElementById('btnMapZoomIn').onclick = () => { mapZoom = Math.min(4, mapZoom + 0.2); applyMapTransform(); };
-  document.getElementById('btnMapZoomOut').onclick = () => { mapZoom = Math.max(0.3, mapZoom - 0.2); applyMapTransform(); };
+  // Zoom cuma lewat scroll/pinch (tombol +/- dihapus) + tombol Reset View
   document.getElementById('btnMapZoomReset').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; applyMapTransform(); };
   // Wheel zoom
   pMapWrap.addEventListener('wheel', (e) => {
@@ -858,11 +914,12 @@ function initMapControls() {
     mapPanX = e.clientX - mapPanStartX; mapPanY = e.clientY - mapPanStartY; applyMapTransform();
   });
   window.addEventListener('mouseup', () => { mapIsPanning = false; pMapWrap.style.cursor = 'grab'; });
-  // Fog toggle
+  // Fog toggle (tampilkan/sembunyikan kabut buat tampilan sendiri)
   document.getElementById('pFogToggle').addEventListener('change', (e) => {
-    const fogLayer = document.getElementById('pFogLayer');
-    fogLayer.style.display = e.target.checked ? '' : 'none';
+    pFogShown = e.target.checked;
+    renderFogCanvasPlayer();
   });
+  window.addEventListener('resize', () => renderFogCanvasPlayer());
 }
 
 function applyMapTransform() {
@@ -901,7 +958,33 @@ function renderPMap() {
        repeating-linear-gradient(90deg, rgba(220,190,120,.55) 0 1px, transparent 1px ${size}px)`;
   } else { pGridOverlay.style.backgroundImage = 'none'; }
   pGridOverlay.style.position = 'absolute'; pGridOverlay.style.inset = '0';
+  renderFogCanvasPlayer();
   renderPTokens();
+}
+
+// =============================== FOG OF WAR (player, view-only) =========
+const FOG_COLS = 30, FOG_ROWS = 20; // sama persis dengan resolusi di sisi DM biar sinkron
+const fogCanvasPlayer = document.getElementById('pFogLayer');
+let pFogShown = true;
+function renderFogCanvasPlayer() {
+  const map = battleState.map || {};
+  if (!map.fogVisible || !pFogShown) { fogCanvasPlayer.style.display = 'none'; return; }
+  fogCanvasPlayer.style.display = '';
+  const w = pMapInner.offsetWidth || pMapWrap.offsetWidth || 800;
+  const h = pMapInner.offsetHeight || pMapWrap.offsetHeight || 400;
+  fogCanvasPlayer.width = w; fogCanvasPlayer.height = h;
+  const ctx = fogCanvasPlayer.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(8,8,12,0.97)'; // player: kabut nyaris gelap total di area belum dibuka DM
+  ctx.fillRect(0, 0, w, h);
+  const revealed = map.fogRevealed || {};
+  const cw = w / FOG_COLS, ch = h / FOG_ROWS;
+  ctx.globalCompositeOperation = 'destination-out';
+  Object.keys(revealed).forEach(key => {
+    const [c, r] = key.split(',').map(Number);
+    ctx.fillRect(c * cw, r * ch, cw + 1, ch + 1);
+  });
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 let pDraggingTokenId = null;

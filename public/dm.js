@@ -19,15 +19,33 @@ let currentMapTabId = 'main';
 
 // =============================== TABS ==================================
 function showDmTab(name) {
-  ['main','battle','map'].forEach(t => {
+  ['main','players','npc','classes','shop','music','battle','map'].forEach(t => {
     document.getElementById('tab-dm-' + t).style.display = t === name ? '' : 'none';
-    document.getElementById('tabBtnDm' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
   });
+  document.querySelectorAll('.page-tabs button').forEach(b => b.classList.remove('active'));
+  const btnMap = { main:'tabBtnDmMain', players:'tabBtnDmPlayers', npc:'tabBtnDmNpc', classes:'tabBtnDmClasses', shop:'tabBtnDmShop', music:'tabBtnDmMusic', battle:'tabBtnDmBattle', map:'tabBtnDmMap' };
+  const btn = document.getElementById(btnMap[name]); if (btn) btn.classList.add('active');
   if (name === 'map') renderMap();
 }
 document.getElementById('tabBtnDmMain').addEventListener('click', () => showDmTab('main'));
+document.getElementById('tabBtnDmPlayers').addEventListener('click', () => showDmTab('players'));
+document.getElementById('tabBtnDmNpc').addEventListener('click', () => showDmTab('npc'));
+document.getElementById('tabBtnDmClasses').addEventListener('click', () => showDmTab('classes'));
+document.getElementById('tabBtnDmShop').addEventListener('click', () => showDmTab('shop'));
+document.getElementById('tabBtnDmMusic').addEventListener('click', () => showDmTab('music'));
 document.getElementById('tabBtnDmBattle').addEventListener('click', () => showDmTab('battle'));
 document.getElementById('tabBtnDmMap').addEventListener('click', () => showDmTab('map'));
+
+// Search & sort listeners
+document.getElementById('playerSearch').addEventListener('input', renderPlayers);
+document.getElementById('playerSort').addEventListener('change', renderPlayers);
+document.getElementById('npcSearch').addEventListener('input', renderNpcs);
+document.getElementById('npcSort').addEventListener('change', renderNpcs);
+document.getElementById('classSearch').addEventListener('input', renderClasses);
+document.getElementById('classSort').addEventListener('change', renderClasses);
+document.getElementById('shopSearch').addEventListener('input', renderShop);
+document.getElementById('shopSort').addEventListener('change', renderShop);
+document.getElementById('musicSearch').addEventListener('input', renderMusic);
 
 // =============================== CONNECT ===============================
 socket.on('connect', () => {
@@ -82,24 +100,47 @@ socket.on('player-online', ({ id, online }) => {
 });
 
 function renderPlayers() {
-  const list = state.playersList || [];
-  document.getElementById('playerCount').textContent = list.length;
+  let list = (state.playersList || []).slice();
+  const q = (document.getElementById('playerSearch')?.value || '').toLowerCase().trim();
+  if (q) list = list.filter(p => (p.nama_karakter||'').toLowerCase().includes(q) || (p.name||'').toLowerCase().includes(q));
+  const sort = document.getElementById('playerSort')?.value || 'name';
+  list.sort((a,b) => {
+    if (sort === 'hp') {
+      const pa = (parseInt(a.max_hp,10)||0) ? (parseInt(a.current_hp,10)||0)/(parseInt(a.max_hp,10)||1) : 1;
+      const pb = (parseInt(b.max_hp,10)||0) ? (parseInt(b.current_hp,10)||0)/(parseInt(b.max_hp,10)||1) : 1;
+      return pa - pb;
+    }
+    if (sort === 'level') return (parseInt(b.lv,10)||0) - (parseInt(a.lv,10)||0);
+    if (sort === 'online') return (b.online?1:0) - (a.online?1:0);
+    return (a.nama_karakter||a.name||'').localeCompare(b.nama_karakter||b.name||'');
+  });
+  document.getElementById('playerCount').textContent = (state.playersList || []).length;
   const box = document.getElementById('playerList');
-  if (!list.length) { box.innerHTML = '<p class="hint">Belum ada pemain yang gabung.</p>'; return; }
+  if (!list.length) { box.innerHTML = `<p class="hint">${q ? 'Tidak ada pemain yang cocok.' : 'Belum ada pemain yang gabung.'}</p>`; return; }
   box.innerHTML = list.map(p => {
-    const max = parseInt(p.max_hp, 10) || 0;
-    const cur = parseInt(p.current_hp, 10);
-    const pct = max ? Math.max(0, Math.min(100, (isNaN(cur) ? max : cur) / max * 100)) : 100;
-    return `<div class="list-item" data-id="${p.id}">
-      <span class="badge ${p.online ? 'online' : 'offline'}">${p.online ? '●' : '○'}</span>
-      <div class="mini-hp">
-        <div style="font-size:13px; font-weight:600;">${escapeHtml(p.nama_karakter || p.name)} <span class="hint">Lv.${p.lv || '-'} ${escapeHtml(p.kelas || '')}</span></div>
-        <div class="hp-bar-wrap"><div class="hp-bar" style="width:${pct}%;"></div></div>
+    const sheet = (state.players && state.players[p.id] && state.players[p.id].sheet) || {};
+    const bar = (cur, max, cls, label) => {
+      const m = parseInt(max, 10) || 0, c = parseInt(cur, 10);
+      const pct = m ? Math.max(0, Math.min(100, (isNaN(c) ? m : c) / m * 100)) : 0;
+      return `<div class="pc-bar-row"><label>${label}</label><div class="mini-bar-wrap ${cls}"><div class="mini-bar-fill" style="width:${pct}%;"></div></div><span class="pc-bar-val">${isNaN(c)?0:c}/${m||0}</span></div>`;
+    };
+    const conds = (sheet.condition || []).filter(c => c && c !== 'Normal');
+    return `<div class="player-card" data-id="${p.id}">
+      <div class="player-card-head">
+        <span class="badge ${p.online ? 'online' : 'offline'}">${p.online ? '●' : '○'}</span>
+        <span class="pc-name">${escapeHtml(p.nama_karakter || p.name)}</span>
+        <button type="button" class="player-quick-delete" title="Hapus player" data-id="${p.id}" style="border:none; background:transparent; color:var(--crimson-bright); font-size:18px; cursor:pointer;">×</button>
       </div>
-      <button type="button" class="player-quick-delete" title="Hapus player" data-id="${p.id}" style="border:none; background:transparent; color:var(--crimson-bright); font-size:18px; cursor:pointer;">×</button>
+      <div class="pc-meta">Lv.${p.lv || sheet.lv || '-'} ${escapeHtml(p.kelas || sheet.kelas || '-')} · AC ${sheet.ac ?? '-'} · 🪙 ${sheet.gold ?? '0'}</div>
+      <div class="pc-bars">
+        ${bar(p.current_hp ?? sheet.current_hp, p.max_hp ?? sheet.max_hp, 'hp', 'HP')}
+        ${bar(sheet.mp_current, sheet.mp_max, 'mp', 'MP')}
+        ${bar(sheet.sp_current, sheet.sp_max, 'sp', 'SP')}
+      </div>
+      ${conds.length ? `<div class="pc-foot">🌀 ${escapeHtml(conds.join(', '))}</div>` : ''}
     </div>`;
   }).join('');
-  box.querySelectorAll('.list-item').forEach(el => {
+  box.querySelectorAll('.player-card').forEach(el => {
     el.onclick = (e) => { if (e.target.closest('.player-quick-delete')) return; openPlayerModal(el.dataset.id); };
   });
   box.querySelectorAll('.player-quick-delete').forEach(btn => {
@@ -227,9 +268,17 @@ function renderSheetReadonly(sheet) {
 socket.on('npcs-update', (npcs) => { state.npcs = npcs; renderNpcs(); refreshBattleSourceOptions(); });
 
 function renderNpcs() {
-  const list = Object.values(state.npcs || {});
+  let list = Object.values(state.npcs || {});
+  const q = (document.getElementById('npcSearch')?.value || '').toLowerCase().trim();
+  if (q) list = list.filter(n => (n.nama||'').toLowerCase().includes(q) || (n.tipe||'').toLowerCase().includes(q));
+  const sort = document.getElementById('npcSort')?.value || 'name';
+  list.sort((a,b) => {
+    if (sort === 'hp') return (parseFloat(b.hp_current)||0) - (parseFloat(a.hp_current)||0);
+    if (sort === 'ac') return (parseFloat(b.ac)||0) - (parseFloat(a.ac)||0);
+    return (a.nama||'').localeCompare(b.nama||'');
+  });
   const tbody = document.getElementById('npcTableBody');
-  if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="hint">Belum ada NPC.</td></tr>'; return; }
+  if (!list.length) { tbody.innerHTML = `<tr><td colspan="5" class="hint">${q ? 'Tidak ada NPC yang cocok.' : 'Belum ada NPC.'}</td></tr>`; return; }
   tbody.innerHTML = list.map(n => `
     <tr data-id="${n.id}" class="npc-row">
       <td>${escapeHtml(n.nama||'-')}</td>
@@ -420,9 +469,13 @@ document.getElementById('npcImportFile').addEventListener('change', (e) => {
 socket.on('classes-update', (classes) => { state.classes = classes; renderClasses(); });
 
 function renderClasses() {
-  const list = Object.values(state.classes || {});
+  let list = Object.values(state.classes || {});
+  const q = (document.getElementById('classSearch')?.value || '').toLowerCase().trim();
+  if (q) list = list.filter(c => (c.nama||'').toLowerCase().includes(q));
+  const sort = document.getElementById('classSort')?.value || 'name';
+  list.sort((a,b) => sort === 'exp' ? (parseFloat(a.exp_req)||0)-(parseFloat(b.exp_req)||0) : (a.nama||'').localeCompare(b.nama||''));
   const tbody = document.getElementById('classTableBody');
-  if (!list.length) { tbody.innerHTML = '<tr><td colspan="4" class="hint">Belum ada kelas.</td></tr>'; return; }
+  if (!list.length) { tbody.innerHTML = `<tr><td colspan="4" class="hint">${q ? 'Tidak ada kelas yang cocok.' : 'Belum ada kelas.'}</td></tr>`; return; }
   tbody.innerHTML = list.map(c => `
     <tr data-id="${c.id}">
       <td>${escapeHtml(c.nama||'-')}</td>
@@ -484,11 +537,9 @@ const gridOverlay = document.getElementById('gridOverlay');
 
 socket.on('map-updated', (map) => { state.map = map; if (document.getElementById('tab-dm-map').style.display !== 'none') renderMap(); });
 
-// DM Map zoom state
+// DM Map zoom state (hanya scroll/pinch buat zoom + drag buat geser — tombol +/- dihapus krn gak kepakai)
 let dmMapZoom = 1, dmPanX = 0, dmPanY = 0, dmIsPanning = false, dmPanSX = 0, dmPanSY = 0;
 
-document.getElementById('btnDmMapZoomIn').onclick = () => { dmMapZoom = Math.min(4, dmMapZoom + 0.2); applyDmMapTransform(); };
-document.getElementById('btnDmMapZoomOut').onclick = () => { dmMapZoom = Math.max(0.25, dmMapZoom - 0.2); applyDmMapTransform(); };
 document.getElementById('btnDmMapZoomReset').onclick = () => { dmMapZoom = 1; dmPanX = 0; dmPanY = 0; applyDmMapTransform(); };
 mapWrap.addEventListener('wheel', (e) => {
   if (e.target.closest('.token')) return;
@@ -498,15 +549,111 @@ mapWrap.addEventListener('wheel', (e) => {
 }, { passive: false });
 mapWrap.addEventListener('mousedown', (e) => {
   if (e.target.closest('.token')) return;
+  if (fogBrushActive) return; // waktu kuas fog aktif, mousedown dipakai buat melukis, bukan geser
   dmIsPanning = true; dmPanSX = e.clientX - dmPanX; dmPanSY = e.clientY - dmPanY; mapWrap.style.cursor = 'grabbing';
 });
 window.addEventListener('mousemove', (e) => { if (!dmIsPanning) return; dmPanX = e.clientX - dmPanSX; dmPanY = e.clientY - dmPanSY; applyDmMapTransform(); });
-window.addEventListener('mouseup', () => { dmIsPanning = false; mapWrap.style.cursor = 'grab'; });
+window.addEventListener('mouseup', () => { dmIsPanning = false; mapWrap.style.cursor = fogBrushActive ? 'crosshair' : 'grab'; });
 
 function applyDmMapTransform() {
   mapInner.style.transform = `translate(${dmPanX}px,${dmPanY}px) scale(${dmMapZoom})`;
   document.getElementById('dmMapZoomLabel').textContent = Math.round(dmMapZoom * 100) + '%';
 }
+
+// =============================== FOG OF WAR (brush reveal) =============
+const FOG_COLS = 30, FOG_ROWS = 20; // resolusi logis kabut, independen dari grid visual — konsisten di semua layar
+const fogCanvasDm = document.getElementById('fogLayerDm');
+let fogBrushActive = false;
+let fogPainting = false;
+let fogPaintReveal = true;
+let fogPaintedThisStroke = new Set();
+
+function fogCellKey(c, r) { return c + ',' + r; }
+
+function renderFogCanvasDm() {
+  const map = state.map || {};
+  if (!map.fogVisible) { fogCanvasDm.style.display = 'none'; return; }
+  fogCanvasDm.style.display = '';
+  const w = mapInner.offsetWidth || mapWrap.offsetWidth || 800;
+  const h = mapInner.offsetHeight || mapWrap.offsetHeight || 500;
+  fogCanvasDm.width = w; fogCanvasDm.height = h;
+  const ctx = fogCanvasDm.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  // DM lihat kabut agak transparan (biar tetap bisa lihat peta), player lihat gelap total
+  ctx.fillStyle = 'rgba(20,20,30,0.6)';
+  ctx.fillRect(0, 0, w, h);
+  const revealed = map.fogRevealed || {};
+  const cw = w / FOG_COLS, ch = h / FOG_ROWS;
+  ctx.globalCompositeOperation = 'destination-out';
+  Object.keys(revealed).forEach(key => {
+    const [c, r] = key.split(',').map(Number);
+    ctx.fillRect(c * cw, r * ch, cw + 1, ch + 1);
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
+window.addEventListener('resize', () => { if (document.getElementById('tab-dm-map').style.display !== 'none') renderFogCanvasDm(); });
+
+function cellFromEvent(e) {
+  const rect = mapInner.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return { c: Math.floor(x * FOG_COLS), r: Math.floor(y * FOG_ROWS) };
+}
+
+function paintFogAt(e) {
+  const cell = cellFromEvent(e); if (!cell) return;
+  const brush = parseInt(document.getElementById('fogBrushSize').value, 10) || 1;
+  const half = Math.floor(brush / 2);
+  for (let dc = -half; dc <= half; dc++) {
+    for (let dr = -half; dr <= half; dr++) {
+      const c = cell.c + dc, r = cell.r + dr;
+      if (c < 0 || r < 0 || c >= FOG_COLS || r >= FOG_ROWS) continue;
+      fogPaintedThisStroke.add(fogCellKey(c, r));
+    }
+  }
+  // Preview langsung di canvas biar terasa responsif sebelum server balas
+  const revealedPreview = Object.assign({}, state.map.fogRevealed || {});
+  fogPaintedThisStroke.forEach(k => { if (fogPaintReveal) revealedPreview[k] = 1; else delete revealedPreview[k]; });
+  state.map = Object.assign({}, state.map, { fogRevealed: revealedPreview });
+  renderFogCanvasDm();
+}
+
+document.getElementById('btnFogBrush').addEventListener('click', () => {
+  fogBrushActive = !fogBrushActive;
+  const btn = document.getElementById('btnFogBrush');
+  btn.textContent = fogBrushActive ? '🖌 Kuas Fog: ON' : '🖌 Kuas Fog: OFF';
+  btn.classList.toggle('active', fogBrushActive);
+  mapWrap.style.cursor = fogBrushActive ? 'crosshair' : 'grab';
+});
+
+mapWrap.addEventListener('mousedown', (e) => {
+  if (!fogBrushActive || e.target.closest('.token')) return;
+  e.preventDefault();
+  fogPainting = true;
+  fogPaintReveal = !e.shiftKey;
+  fogPaintedThisStroke = new Set();
+  paintFogAt(e);
+});
+window.addEventListener('mousemove', (e) => { if (fogPainting) paintFogAt(e); });
+window.addEventListener('mouseup', () => {
+  if (!fogPainting) return;
+  fogPainting = false;
+  if (fogPaintedThisStroke.size) {
+    socket.emit('dm:fog-paint', { code: CODE, cells: [...fogPaintedThisStroke], reveal: fogPaintReveal });
+  }
+  fogPaintedThisStroke = new Set();
+});
+
+document.getElementById('btnFogRevealAll').addEventListener('click', () => {
+  const cells = [];
+  for (let c = 0; c < FOG_COLS; c++) for (let r = 0; r < FOG_ROWS; r++) cells.push(fogCellKey(c, r));
+  socket.emit('dm:fog-paint', { code: CODE, cells, reveal: true });
+});
+document.getElementById('btnFogResetAll').addEventListener('click', () => {
+  if (!confirm('Tutup semua kabut lagi di map ini?')) return;
+  socket.emit('dm:fog-reset', { code: CODE });
+});
 
 // Token image upload preview
 let tokenImageDataUrl = null;
@@ -983,7 +1130,9 @@ function syncMusicPlayer() {
 document.addEventListener('click', ()=>{ if(!dmMusicUnlocked){dmMusicUnlocked=true;syncMusicPlayer();} }, {once:true});
 
 function renderMusic() {
-  const tracks = Object.values((state.music&&state.music.tracks)||{});
+  let tracks = Object.values((state.music&&state.music.tracks)||{});
+  const q = (document.getElementById('musicSearch')?.value || '').toLowerCase().trim();
+  if (q) tracks = tracks.filter(t => (t.name||'').toLowerCase().includes(q));
   const pb = (state.music&&state.music.playback)||{};
   const box = document.getElementById('musicList');
   box.innerHTML = tracks.length ? tracks.map(t=>`
@@ -991,7 +1140,7 @@ function renderMusic() {
       <span class="m-name">${t.id===pb.trackId&&pb.isPlaying?'▶ ':''}${t.type==='youtube'?'▶️ ':''}${escapeHtml(t.name)}</span>
       <button type="button" class="small btn-music-play">Putar</button>
       <button type="button" class="row-remove btn-music-remove" title="Hapus">×</button>
-    </div>`).join('') : '<p class="hint">Belum ada lagu.</p>';
+    </div>`).join('') : `<p class="hint">${q ? 'Tidak ada lagu yang cocok.' : 'Belum ada lagu.'}</p>`;
   box.querySelectorAll('.btn-music-play').forEach(btn => { btn.onclick = ()=>socket.emit('dm:music-play',{code:CODE,id:btn.closest('.music-item').dataset.id}); });
   box.querySelectorAll('.btn-music-remove').forEach(btn => { btn.onclick = ()=>socket.emit('dm:music-remove',{code:CODE,id:btn.closest('.music-item').dataset.id}); });
   const current = tracks.find(t=>t.id===pb.trackId);
@@ -1086,8 +1235,16 @@ socket.on('shop-updated', (items) => { state.shop=state.shop||{}; state.shop.ite
 
 function renderShop() {
   const box = document.getElementById('shopTableBody'); if (!box) return;
-  const list = Object.values((state.shop&&state.shop.items)||{});
-  if (!list.length) { box.innerHTML='<tr><td colspan="5" class="hint">Belum ada item.</td></tr>'; return; }
+  let list = Object.values((state.shop&&state.shop.items)||{});
+  const q = (document.getElementById('shopSearch')?.value || '').toLowerCase().trim();
+  if (q) list = list.filter(it => (it.nama||'').toLowerCase().includes(q) || (it.tipe||'').toLowerCase().includes(q));
+  const sort = document.getElementById('shopSort')?.value || 'name';
+  list.sort((a,b) => {
+    if (sort === 'price') return (parseFloat(a.harga)||0) - (parseFloat(b.harga)||0);
+    if (sort === 'type') return (a.tipe||'').localeCompare(b.tipe||'');
+    return (a.nama||'').localeCompare(b.nama||'');
+  });
+  if (!list.length) { box.innerHTML=`<tr><td colspan="5" class="hint">${q ? 'Tidak ada item yang cocok.' : 'Belum ada item.'}</td></tr>`; return; }
   box.innerHTML = list.map(it=>`
     <tr data-id="${it.id}" class="shop-row">
       <td>${escapeHtml(it.nama||'-')}</td>

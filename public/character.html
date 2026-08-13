@@ -39,9 +39,14 @@
   .map-zoom-bar { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
   .map-zoom-bar button { padding:4px 10px; font-size:13px; }
 
-  /* ---- Fog of war ---- */
-  .fog-layer { position:absolute; inset:0; background:rgba(20,20,30,0.82); pointer-events:none; z-index:4; }
-  .fog-revealed { clip-path: none; }
+  /* ---- Fog of war (canvas, disinkron dari brush DM) ---- */
+  .fog-layer { position:absolute; inset:0; z-index:4; pointer-events:none; width:100%; height:100%; }
+
+  /* ---- VTT-style map canvas (Foundry/Roll20-ish) ---- */
+  .vtt-canvas { background:#14161c; border:1px solid #3a3d46; border-radius:8px; box-shadow:inset 0 0 40px rgba(0,0,0,.6); }
+  .vtt-zoom-bar { background:#1c1e26; border:1px solid #3a3d46; border-radius:6px; padding:6px 10px; }
+  .vtt-zoom-bar .hint { color:#c9c2a8; }
+  .vtt-zoom-label { font-weight:700; color:var(--gold-bright); }
 
   /* ---- Name tag on token ---- */
   .token-nametag { position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.78); color:#f0e0a0; font-size:10px; white-space:nowrap; padding:2px 5px; border-radius:3px; pointer-events:none; }
@@ -59,6 +64,7 @@
   /* ---- Status effect conditions ---- */
   .condition-fatal { color:var(--crimson-bright); font-weight:700; }
   .condition-dot { color:#c47c00; }
+  .condition-debuff { color:#7b3fa0; font-weight:600; }
 
   /* ---- Skills merged (active+passive) ---- */
   .skill-section-label { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); margin:6px 0 2px; border-bottom:1px solid rgba(220,190,120,.3); padding-bottom:2px; }
@@ -160,24 +166,14 @@
           <div class="field"><label>MP Max</label><input type="number" id="f_mp_max"></div>
           <div class="field"><label>MP Current</label><input type="number" id="f_mp_current"></div>
         </div>
+        <div class="mini-bar-wrap mp" style="height:10px; margin-bottom:10px;"><div class="mini-bar-fill" id="mpBar" style="width:100%;"></div></div>
         <div class="row">
           <div class="field"><label>SP Max</label><input type="number" id="f_sp_max"></div>
           <div class="field"><label>SP Current</label><input type="number" id="f_sp_current"></div>
         </div>
+        <div class="mini-bar-wrap sp" style="height:10px; margin-bottom:10px;"><div class="mini-bar-fill" id="spBar" style="width:100%;"></div></div>
         <label style="margin-top:6px;">Condition</label>
         <div class="checkbox-list" id="conditionContainer"></div>
-
-        <div class="row" style="margin-top:10px;">
-          <div class="field"><label>Proficiency Bonus</label><input type="text" id="f_proficiency_bonus"></div>
-          <div class="field"><label>Passive Perception</label><input type="text" id="f_passive_perception"></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>Hit Dice</label><input type="text" id="f_hit_dice"></div>
-          <div class="field"><label>Total</label><input type="text" id="f_hit_dice_total"></div>
-          <div class="field" style="max-width:110px;"><label>Inspiration</label>
-            <input type="checkbox" id="f_inspiration" style="width:22px; height:22px; margin-top:4px;">
-          </div>
-        </div>
 
         <label style="margin-top:6px;">Death Count</label>
         <div class="death-count" id="deathCountContainer"></div>
@@ -400,22 +396,21 @@
     </div>
     <div class="panel">
       <div class="panel-header">🗺 Peta Pertempuran</div>
-      <div class="map-zoom-bar">
-        <button id="btnMapZoomIn" class="small secondary">🔍+</button>
-        <button id="btnMapZoomOut" class="small secondary">🔍−</button>
-        <button id="btnMapZoomReset" class="small secondary">↺ Reset</button>
-        <span class="hint" id="mapZoomLabel">100%</span>
+      <div class="map-zoom-bar vtt-zoom-bar">
+        <span class="hint">Scroll/pinch untuk zoom · drag untuk geser</span>
+        <button id="btnMapZoomReset" class="small secondary">↺ Reset View</button>
+        <span class="hint vtt-zoom-label" id="mapZoomLabel">100%</span>
         <label class="hint" style="margin-left:auto; display:flex; align-items:center; gap:4px;">
-          <input type="checkbox" id="pFogToggle" style="width:auto;"> Tampilkan Fog of War
+          <input type="checkbox" id="pFogToggle" checked style="width:auto;"> Tampilkan Fog of War
         </label>
       </div>
-      <div class="map-wrap" id="pMapWrap" style="overflow:hidden; position:relative; cursor:grab;">
+      <div class="map-wrap vtt-canvas" id="pMapWrap" style="overflow:hidden; position:relative; cursor:grab;">
         <div id="pMapInner" style="position:absolute; transform-origin:0 0; will-change:transform;">
           <div class="map-grid-overlay" id="pGridOverlay"></div>
-          <div id="pFogLayer" class="fog-layer" style="display:none;"></div>
+          <canvas id="pFogLayer" class="fog-layer" style="display:none; position:absolute; inset:0;"></canvas>
         </div>
       </div>
-      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (berwarna emas) bisa kamu geser sendiri. Pinch/scroll untuk zoom.</p>
+      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (berwarna emas) bisa kamu geser sendiri. Area gelap adalah kabut yang belum dibuka DM.</p>
     </div>
   </div><!-- /tab-map -->
 

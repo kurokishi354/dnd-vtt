@@ -188,18 +188,14 @@ function blankSheet(name) {
     mp_max: '', mp_current: '', sp_max: '', sp_current: '',
     condition: [],
     condition_other: '',
-    proficiency_bonus: '', passive_perception: '', inspiration: false,
-    hit_dice: '', hit_dice_total: '',
     death_count: [false, false, false],
     goal: '',
     equipment: [
       { nama: '', tipe: '', atk_bonus: '', damage: '', catatan: '' },
       { nama: '', tipe: '', atk_bonus: '', damage: '', catatan: '' }
     ],
-    gears: {
-      helmet: '', armor: '', gloves: '', boots: '',
-      accessory1: '', accessory2: '', necklace: '', artifact: ''
-    },
+    gears: ['helmet','armor','gloves','boots','accessory1','accessory2','necklace','artifact']
+      .map(key => ({ key, item: '', stat: '', amount: '', equipped: false })),
     extra_weapon: [
       { nama: '', atk_bonus: '', damage: '' },
       { nama: '', atk_bonus: '', damage: '' }
@@ -533,7 +529,7 @@ io.on('connection', (socket) => {
       players: {},
       npcs: {},
       classes: {},
-      map: { imageUrl: null, gridSize: 50, gridVisible: true, offsetX: 0, offsetY: 0 },
+      map: { imageUrl: null, gridSize: 50, gridVisible: true, offsetX: 0, offsetY: 0, fogVisible: false, fogRevealed: {} },
       tokens: {},
       battle: { entries: {}, turn: { activeId: null, round: 1 } },
       music: blankMusic(),
@@ -947,6 +943,27 @@ io.on('connection', (socket) => {
     if (fogVisible != null) session.map.fogVisible = fogVisible;
     if (offsetX != null) session.map.offsetX = offsetX;
     if (offsetY != null) session.map.offsetY = offsetY;
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('map-updated', session.map);
+  });
+
+  // Fog of war: DM klik/drag buat "menghapus" (reveal) atau menutup lagi sel kabut di map
+  socket.on('dm:fog-paint', ({ code, cells, reveal }) => {
+    const session = sessions[code];
+    if (!session) return;
+    if (!session.map.fogRevealed) session.map.fogRevealed = {};
+    (cells || []).forEach(key => {
+      if (reveal) session.map.fogRevealed[key] = 1;
+      else delete session.map.fogRevealed[key];
+    });
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('map-updated', session.map);
+  });
+
+  socket.on('dm:fog-reset', ({ code }) => {
+    const session = sessions[code];
+    if (!session) return;
+    session.map.fogRevealed = {};
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('map-updated', session.map);
   });
