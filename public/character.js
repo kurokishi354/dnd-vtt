@@ -929,7 +929,6 @@ document.getElementById('importSheetFile').addEventListener('change', (e) => {
 
 // =============================== INIT ===================================
 renderStaticSections();
-initMapControls(); // sekali aja, biar listener fog/resize gak numpuk tiap pindah tab
 ['f_max_hp','f_current_hp','f_mp_max','f_mp_current','f_sp_max','f_sp_current'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateHpBar);
 });
@@ -1592,3 +1591,8 @@ const volEl = document.getElementById('musicBarVolume');
 if (volEl) volEl.addEventListener('input', e => { playerMusicPlayer.volume = parseFloat(e.target.value); });
 const muteEl = document.getElementById('btnMusicMute');
 if (muteEl) muteEl.addEventListener('click', () => { playerMusicPlayer.muted = !playerMusicPlayer.muted; muteEl.textContent = playerMusicPlayer.muted ? '🔇' : '🔊'; });
+
+// Panggil sekali di akhir file — pastiin semua const (pMapWrap, pMapImg, dst) & fungsi
+// yang dipakai di dalamnya udah kebentuk duluan (hindari temporal dead zone error
+// yang bisa bikin seluruh script berhenti sebelum sempat konek socket).
+initMapControls();

@@ -16,8 +16,11 @@
   .attr-trait-row { display:flex; align-items:center; gap:6px; padding:4px 0; border-bottom:1px dashed rgba(220,190,120,.3); }
   .attr-trait-row:last-child { border-bottom:none; }
   .attr-trait-label { flex:1; font-size:13px; }
-  .attr-trait-pct { width:62px; flex:none; }
-  .attr-trait-bonus { width:62px; flex:none; font-size:11px; color:var(--ink-soft); }
+  /* Selector dibuat lebih spesifik (bukan cuma .attr-trait-pct) supaya menang lawan aturan dasar
+     "input[type=text] { width:100% }" di style.css — kalau cuma nama class doang, specificity-nya
+     kalah dan lebarnya balik ke 100% (meluber keluar panel, kejadian yg dilaporkan). */
+  .attr-trait-row input.attr-trait-pct { width:62px; flex:none; }
+  .attr-trait-row input.attr-trait-bonus { width:62px; flex:none; font-size:11px; color:var(--ink-soft); }
   .attr-trait-applies { font-size:11px; color:var(--gold); }
 
   /* ---- Companion tab ---- */
