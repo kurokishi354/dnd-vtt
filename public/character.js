@@ -58,8 +58,27 @@ const BUFF_STAT_OPTIONS = [
 // Skill status effect: bisa dikaitkan ke skill -> jika kena, otomatis ceklis condition
 const STATUS_EFFECT_OPTIONS = ['','Stunned','Frozen','Silenced','Poisoned','Blinded','Sleep','Confused','Burn','Fear','Paralyzed','Bleeding'];
 
+// Tipe efek item inventory — kaya potion di RPG pada umumnya: bukan cuma HP, tapi juga MP/SP,
+// bisa nyembuhin status (cure), bahkan revive (hapus kondisi fatal + heal sekaligus).
+const INV_ITEM_TYPES = [
+  ['misc','📦 Misc (tanpa efek)'],
+  ['heal','💚 Heal (HP)'],
+  ['mana_regen','🔵 Mana Potion (MP)'],
+  ['sp_regen','🟢 Stamina Potion (SP)'],
+  ['damage','⚔ Damage (mis. bom/racun lempar)'],
+  ['buff','🌀 Buff'],
+  ['debuff','🌀 Debuff'],
+  ['cure','✨ Cure Status (hapus kondisi)'],
+  ['revive','⚕ Revive (hapus fatal + heal)']
+];
+const INV_ITEM_TYPE_LABEL = Object.fromEntries(INV_ITEM_TYPES);
+
+// Slot inventory dasar 10, DM bisa kasih slot tambahan lewat sheet.inv_extra_slots
+const INV_BASE_SLOTS = 10;
+
 // =============================== STATE ===================================
 let invState = [{ checked: false, item: '', desc: '', type: 'misc', qty: 1 }];
+let invExtraSlots = 0;
 const GEAR_SLOTS = [['helmet','Helmet'],['armor','Armor'],['gloves','Gloves'],['boots','Boots'],
   ['accessory1','Accessory I'],['accessory2','Accessory II'],['necklace','Necklace'],['artifact','Artifact / Relic']];
 // gearState: tiap slot = { key, item, stat, amount, equipped } — dipakai (equip) untuk nambah status kaya RPG pada umumnya
@@ -68,6 +87,7 @@ let buffState = [];
 let companionState = [];
 let classCatalog = {};
 let myUnlockedClasses = [];
+let shopItems = {};
 
 // Battle state
 const battleState = {
@@ -78,10 +98,7 @@ const battleState = {
 let diceLog = [];
 let onlinePlayersList = [];
 
-// Map zoom state
-let mapZoom = 1;
-let mapPanX = 0, mapPanY = 0;
-let mapIsPanning = false, mapPanStartX = 0, mapPanStartY = 0;
+// Map state (no zoom — peta selalu fit ke ukuran gambar aslinya)
 
 // =============================== UTIL ====================================
 function escapeAttrVal(str) {
@@ -130,18 +147,20 @@ socket.on('players-list-update', (list) => {
 
 // =============================== TABS ===================================
 function showPageTab(name) {
-  ['sheet','battle','map','companion'].forEach(t => {
+  ['sheet','battle','map','companion','shop'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === name ? '' : 'none';
     document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
   });
   if (name === 'battle') renderBattleStatus();
-  if (name === 'map') { renderPMap(); initMapControls(); }
+  if (name === 'map') renderPMap();
   if (name === 'companion') renderCompanions();
+  if (name === 'shop') renderShopList();
 }
 document.getElementById('tabBtnSheet').addEventListener('click', () => showPageTab('sheet'));
 document.getElementById('tabBtnBattle').addEventListener('click', () => showPageTab('battle'));
 document.getElementById('tabBtnMap').addEventListener('click', () => showPageTab('map'));
 document.getElementById('tabBtnCompanion').addEventListener('click', () => showPageTab('companion'));
+document.getElementById('tabBtnShop').addEventListener('click', () => showPageTab('shop'));
 
 function showBattleSubTab(name) {
   document.getElementById('battle-sub-battle').style.display = name === 'battle' ? '' : 'none';
@@ -194,6 +213,8 @@ document.getElementById('btnChangeClass').addEventListener('click', () => {
 });
 
 // =============================== INVENTORY ==============================
+function invMaxSlots() { return INV_BASE_SLOTS + (parseInt(invExtraSlots, 10) || 0); }
+
 function renderInventory() {
   const box = document.getElementById('inventoryContainer');
   box.innerHTML = '';
@@ -205,29 +226,41 @@ function renderInventory() {
         <span class="inv-num">${i + 1}</span>
         <input type="checkbox" ${it.checked ? 'checked' : ''} title="Sudah dipakai">
         <input type="text" value="${escapeAttrVal(it.item)}" placeholder="Nama item" data-fromdm="${it.fromDM ? '1' : '0'}" style="flex:1;">
-        ${it.fromDM ? '<span class="dm-tag">dari DM</span>' : ''}
+        ${it.fromDM ? '<span class="dm-tag">dari DM</span>' : ''}${it.fromShop ? '<span class="dm-tag" style="background:var(--sapphire);">dari Shop</span>' : ''}
         <input type="number" min="1" value="${it.qty || 1}" style="width:50px;" title="Qty">
         <button type="button" class="inv-remove" title="Hapus slot">×</button>
       </div>
       <div class="row" style="margin:0; gap:6px;">
-        <select style="max-width:110px;" title="Tipe item">
-          ${['misc','heal','damage','buff','debuff'].map(t => `<option value="${t}" ${(it.type||'misc')===t?'selected':''}>${{misc:'📦 Misc',heal:'💚 Heal',damage:'⚔ Damage',buff:'🌀 Buff',debuff:'🌀 Debuff'}[t]}</option>`).join('')}
+        <select style="max-width:150px;" title="Tipe item">
+          ${INV_ITEM_TYPES.map(([t,label]) => `<option value="${t}" ${(it.type||'misc')===t?'selected':''}>${label}</option>`).join('')}
         </select>
-        <input type="text" value="${escapeAttrVal(it.formula||'')}" placeholder="Formula (mis. 1d4+2 heal)" style="flex:1;">
+        <input type="text" value="${escapeAttrVal(it.formula||'')}" placeholder="Formula (mis. 1d4+2)" style="flex:1;">
         <input type="text" value="${escapeAttrVal(it.desc||'')}" placeholder="Deskripsi item…" style="flex:2;">
       </div>`;
     wrap.querySelector('input[type=checkbox]').addEventListener('change', e => { it.checked = e.target.checked; scheduleSave(); });
     wrap.querySelector('input[type=text]').addEventListener('input', e => { it.item = e.target.value; scheduleSave(); });
     wrap.querySelector('input[type=number]').addEventListener('input', e => { it.qty = parseInt(e.target.value,10)||1; scheduleSave(); });
-    wrap.querySelectorAll('select')[0].addEventListener('change', e => { it.type = e.target.value; scheduleSave(); });
+    wrap.querySelectorAll('select')[0].addEventListener('change', e => { it.type = e.target.value; scheduleSave(); renderBattleInventory(); });
     wrap.querySelectorAll('input[type=text]')[1].addEventListener('input', e => { it.formula = e.target.value; scheduleSave(); });
     wrap.querySelectorAll('input[type=text]')[2].addEventListener('input', e => { it.desc = e.target.value; scheduleSave(); });
     wrap.querySelector('.inv-remove').addEventListener('click', () => { invState.splice(i, 1); renderInventory(); scheduleSave(); });
     box.appendChild(wrap);
   });
-  document.getElementById('invCountLabel').textContent = `(${invState.length} slot)`;
+  const max = invMaxSlots();
+  const countLabel = document.getElementById('invCountLabel');
+  if (countLabel) countLabel.textContent = `(${invState.length}/${max} slot)`;
+  const counterEl = document.getElementById('invSlotCounter');
+  if (counterEl) {
+    counterEl.textContent = invState.length >= max
+      ? `Slot penuh (${invState.length}/${max}) — minta DM tambah slot kalau perlu.`
+      : `${invState.length}/${max} slot terpakai`;
+    counterEl.classList.toggle('full', invState.length >= max);
+  }
+  const addBtn = document.getElementById('btnAddInvSlot');
+  if (addBtn) addBtn.disabled = invState.length >= max;
 }
 document.getElementById('btnAddInvSlot').addEventListener('click', () => {
+  if (invState.length >= invMaxSlots()) return;
   invState.push({ checked: false, item: '', desc: '', type: 'misc', qty: 1 });
   renderInventory(); scheduleSave();
 });
@@ -484,6 +517,60 @@ document.getElementById('btnAddCompanion').addEventListener('click', () => {
   renderCompanions(); scheduleSave();
 });
 
+// =============================== SHOP (player-facing) ===================
+function renderShopList() {
+  const box = document.getElementById('shopItemList');
+  if (!box) return;
+  const goldDisplay = document.getElementById('shopGoldDisplay');
+  const myGold = parseFloat(val('f_gold')) || 0;
+  if (goldDisplay) goldDisplay.textContent = myGold;
+
+  const items = Object.values(shopItems || {});
+  if (!items.length) { box.innerHTML = '<p class="hint">DM belum menambahkan item ke toko.</p>'; return; }
+
+  box.innerHTML = items.map(it => {
+    const price = parseFloat(it.harga) || 0;
+    const stokLimited = it.stok !== '' && it.stok != null && !isNaN(parseInt(it.stok, 10));
+    const stokNum = stokLimited ? parseInt(it.stok, 10) : null;
+    const outOfStock = stokLimited && stokNum <= 0;
+    const cantAfford = myGold < price;
+    return `<div class="shop-card" data-id="${it.id}">
+      <div class="shop-card-top">
+        <div>
+          <div class="shop-card-name">${pEscapeHtml(it.nama)} ${it.tipe ? `<span class="hint">(${pEscapeHtml(it.tipe)})</span>` : ''}</div>
+          ${it.desc || it.deskripsi ? `<div class="shop-card-desc">${pEscapeHtml(it.deskripsi || it.desc)}</div>` : ''}
+        </div>
+        <div class="shop-card-price">🪙 ${price}</div>
+      </div>
+      <div class="shop-card-buy-row">
+        <span class="hint">Stok: ${stokLimited ? stokNum : '~'}</span>
+        <input type="number" min="1" value="1" class="shop-buy-qty" style="max-width:60px;" ${outOfStock ? 'disabled' : ''}>
+        <button type="button" class="small shop-buy-btn" data-id="${it.id}" ${outOfStock || cantAfford ? 'disabled' : ''}>${outOfStock ? 'Stok Habis' : cantAfford ? 'Gold Kurang' : '🛒 Beli'}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.shop-buy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.shop-card');
+      const qty = parseInt(card.querySelector('.shop-buy-qty').value, 10) || 1;
+      buyShopItem(btn.dataset.id, qty);
+    });
+  });
+}
+
+function buyShopItem(itemId, qty) {
+  socket.emit('player:buy-item', { code: CODE, playerId: PLAYER_ID, itemId, qty }, (res) => {
+    if (res && res.ok) {
+      fillForm(res.sheet);
+      showToast(`🛒 Berhasil membeli item. Gold sekarang: ${res.sheet.gold}.`);
+      renderShopList();
+    } else {
+      alert(res && res.error ? res.error : 'Gagal membeli item.');
+    }
+  });
+}
+
 // =============================== STATIC SECTIONS ========================
 function renderStaticSections() {
   // Ability scores
@@ -696,9 +783,13 @@ function fillForm(sheet) {
   invState = (sheet.inventory && sheet.inventory.length)
     ? JSON.parse(JSON.stringify(sheet.inventory))
     : [{ checked: false, item: '', desc: '', type: 'misc', qty: 1 }];
+  invExtraSlots = parseInt(sheet.inv_extra_slots, 10) || 0;
+  // Kalau slot yang keisi (dari import/legacy) lebih banyak dari cap, cap tetap ngikutin isi biar gak kepotong datanya
   renderInventory();
 
   document.getElementById('f_gold').value = sheet.gold || '';
+  const goldDisplay = document.getElementById('shopGoldDisplay');
+  if (goldDisplay) goldDisplay.textContent = sheet.gold || '0';
 
   // Companion (baru)
   companionState = sheet.companions ? JSON.parse(JSON.stringify(sheet.companions)) : [];
@@ -764,6 +855,7 @@ function readForm() {
       damage: val(`ew_${i}_damage`), catatan: val(`ew_${i}_catatan`), element: val(`ew_${i}_element`)
     })),
     inventory: invState,
+    inv_extra_slots: invExtraSlots,
     gold: val('f_gold'),
     companions: companionState,
     skills: { active: [], passive: [], ultimate: [] },
@@ -837,6 +929,7 @@ document.getElementById('importSheetFile').addEventListener('change', (e) => {
 
 // =============================== INIT ===================================
 renderStaticSections();
+initMapControls(); // sekali aja, biar listener fog/resize gak numpuk tiap pindah tab
 ['f_max_hp','f_current_hp','f_mp_max','f_mp_current','f_sp_max','f_sp_current'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateHpBar);
 });
@@ -861,10 +954,12 @@ socket.on('connect', () => {
     battleState.music = res.state.music || { tracks: {}, playback: { trackId: null, isPlaying: false, startTs: 0, position: 0, volume: 0.7, loop: false } };
     diceLog = res.state.log || [];
     onlinePlayersList = res.state.playersList || [];
-    renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderOnlinePlayers();
+    shopItems = (res.state.shop && res.state.shop.items) || {};
+    renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderOnlinePlayers(); renderShopList();
   });
 });
 
+socket.on('shop-updated', (items) => { shopItems = items || {}; renderShopList(); });
 socket.on('classes-update', (classes) => { classCatalog = classes || {}; renderClassPicker(); });
 socket.on('your-classes-updated', ({ unlockedClasses, note }) => {
   myUnlockedClasses = unlockedClasses || []; renderClassPicker();
@@ -885,8 +980,9 @@ socket.on('you-were-removed', ({ note }) => {
 });
 socket.on('players-list-update', (list) => { onlinePlayersList = list || []; renderOnlinePlayers(); });
 
-// =============================== MAP ====================================
+// =============================== MAP (fit-to-image, no zoom) ============
 const pMapWrap = document.getElementById('pMapWrap');
+const pMapImg = document.getElementById('pMapImg');
 const pMapInner = document.getElementById('pMapInner');
 const pGridOverlay = document.getElementById('pGridOverlay');
 
@@ -894,70 +990,33 @@ socket.on('map-updated', (map) => { battleState.map = map; renderPMap(); });
 socket.on('tokens-updated', (tokens) => { battleState.tokens = tokens; renderPTokens(); });
 
 function initMapControls() {
-  // Zoom cuma lewat scroll/pinch (tombol +/- dihapus) + tombol Reset View
-  document.getElementById('btnMapZoomReset').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; applyMapTransform(); };
-  // Wheel zoom
-  pMapWrap.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    mapZoom = Math.max(0.3, Math.min(4, mapZoom + delta));
-    applyMapTransform();
-  }, { passive: false });
-  // Pan
-  pMapWrap.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.token')) return;
-    mapIsPanning = true; mapPanStartX = e.clientX - mapPanX; mapPanStartY = e.clientY - mapPanY;
-    pMapWrap.style.cursor = 'grabbing';
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!mapIsPanning) return;
-    mapPanX = e.clientX - mapPanStartX; mapPanY = e.clientY - mapPanStartY; applyMapTransform();
-  });
-  window.addEventListener('mouseup', () => { mapIsPanning = false; pMapWrap.style.cursor = 'grab'; });
   // Fog toggle (tampilkan/sembunyikan kabut buat tampilan sendiri)
   document.getElementById('pFogToggle').addEventListener('change', (e) => {
     pFogShown = e.target.checked;
     renderFogCanvasPlayer();
   });
   window.addEventListener('resize', () => renderFogCanvasPlayer());
-}
-
-function applyMapTransform() {
-  pMapInner.style.transform = `translate(${mapPanX}px,${mapPanY}px) scale(${mapZoom})`;
-  document.getElementById('mapZoomLabel').textContent = Math.round(mapZoom * 100) + '%';
-}
-
-const _mapAspectCache = {};
-function setMapAspectRatio(wrapEl, imageUrl) {
-  if (!imageUrl) { wrapEl.style.aspectRatio = '16/10'; return; }
-  if (_mapAspectCache[imageUrl]) { wrapEl.style.aspectRatio = _mapAspectCache[imageUrl]; return; }
-  const img = new Image();
-  img.onload = () => {
-    if (img.naturalWidth && img.naturalHeight) {
-      const ratio = `${img.naturalWidth}/${img.naturalHeight}`;
-      _mapAspectCache[imageUrl] = ratio;
-      wrapEl.style.aspectRatio = ratio;
-    }
-  };
-  img.src = imageUrl;
+  // Peta gak butuh reflow khusus pas gambar kelar dimuat — cukup re-render fog
+  pMapImg.addEventListener('load', () => renderFogCanvasPlayer());
 }
 
 function renderPMap() {
   const map = battleState.map || {};
-  // Set background on inner (the scalable layer)
-  pMapInner.style.backgroundImage = map.imageUrl ? `url(${map.imageUrl})` : 'none';
-  pMapInner.style.backgroundSize = 'cover';
-  pMapInner.style.backgroundPosition = 'center';
-  setMapAspectRatio(pMapInner, map.imageUrl);
-  // Make inner size match outer so panning works
-  if (!map.imageUrl) { pMapInner.style.width = '100%'; pMapInner.style.height = '400px'; }
+  if (map.imageUrl) {
+    pMapImg.src = map.imageUrl;
+    pMapImg.style.display = 'block';
+    pMapWrap.classList.remove('no-image');
+  } else {
+    pMapImg.removeAttribute('src');
+    pMapImg.style.display = 'none';
+    pMapWrap.classList.add('no-image');
+  }
   const size = map.gridSize || 50;
   if (map.gridVisible) {
     pGridOverlay.style.backgroundImage =
       `repeating-linear-gradient(0deg, rgba(220,190,120,.55) 0 1px, transparent 1px ${size}px),
        repeating-linear-gradient(90deg, rgba(220,190,120,.55) 0 1px, transparent 1px ${size}px)`;
   } else { pGridOverlay.style.backgroundImage = 'none'; }
-  pGridOverlay.style.position = 'absolute'; pGridOverlay.style.inset = '0';
   renderFogCanvasPlayer();
   renderPTokens();
 }
@@ -1014,31 +1073,29 @@ function renderPTokens() {
     el.className = 'token' + (mine ? ' draggable mine' : '');
     el.style.left = tok.x + '%';
     el.style.top = tok.y + '%';
-    el.style.position = 'absolute';
-    el.style.background = tok.color || '#555';
     el.dataset.id = tok.id;
 
-    // Token image support
-    if (tok.imageUrl) {
-      const img = document.createElement('img');
-      img.src = tok.imageUrl; img.className = 'token-img'; img.draggable = false;
-      el.appendChild(img);
-    } else {
-      el.textContent = (tok.label || '').slice(0, 2);
-    }
-
-    // Name tag
+    // Nama selalu tampil sebagai label di atas token (bukan cuma inisial di dalam lingkaran)
+    // — biar jelas siapa itu siapa pas battle rame-rame.
     const nametag = document.createElement('div');
     nametag.className = 'token-nametag';
     nametag.textContent = tok.label || '';
     el.appendChild(nametag);
 
-    // Icon for NPC/enemy
-    if (tok.tokenType === 'enemy') {
-      el.style.border = '2px solid #c0392b';
-    } else if (tok.tokenType === 'ally') {
-      el.style.border = '2px solid #27ae60';
+    const circle = document.createElement('div');
+    circle.className = 'token-circle';
+    circle.style.background = tok.imageUrl ? 'transparent' : (tok.color || '#555');
+    if (tok.tokenType === 'enemy') circle.style.borderColor = '#e07a6b';
+    else if (tok.tokenType === 'ally') circle.style.borderColor = '#7bd39a';
+
+    if (tok.imageUrl) {
+      const img = document.createElement('img');
+      img.src = tok.imageUrl; img.className = 'token-img'; img.draggable = false;
+      circle.appendChild(img);
+    } else {
+      circle.textContent = (tok.label || '').slice(0, 2);
     }
+    el.appendChild(circle);
 
     el.title = (tok.label || '') + (mine ? ' (token kamu — bisa digeser)' : '');
     if (mine) el.addEventListener('mousedown', (e) => { pDraggingTokenId = tok.id; e.preventDefault(); e.stopPropagation(); });
@@ -1060,11 +1117,11 @@ const SKILL_ACTION_LABEL = Object.fromEntries(SKILL_ACTION_OPTIONS);
 function renderBattleInventory() {
   const box = document.getElementById('btInventoryBattle');
   if (!box) return;
-  const items = invState.filter(it => it.item && it.type && it.type !== 'misc');
+  const items = invState.filter(it => it.item && it.type && it.type !== 'misc' && !it.checked);
   if (!items.length) { box.innerHTML = ''; return; }
   let html = '<div class="battle-skill-cat">🎒 Inventory (Bisa Dipakai)</div>';
-  items.forEach((it, realIdx) => {
-    const label = { heal: '💚 Heal', damage: '⚔ Dmg', buff: '🌀 Buff', debuff: '🌀 Debuff' }[it.type] || '📦';
+  items.forEach((it) => {
+    const label = INV_ITEM_TYPE_LABEL[it.type] || '📦';
     html += `<div class="skill-line" style="align-items:center;">
       <span>${pEscapeHtml(it.item)} <span class="hint">${label}${it.formula ? ' · ' + pEscapeHtml(it.formula) : ''}${it.desc ? ' · ' + pEscapeHtml(it.desc) : ''}</span> <span class="hint">(qty: ${it.qty||1})</span></span>
       <button type="button" class="small inv-use-btn" data-inv-i="${invState.indexOf(it)}">⚡ Pakai</button>
@@ -1076,6 +1133,9 @@ function renderBattleInventory() {
   });
 }
 
+// Item -> actionType battle. cure & revive ditangani terpisah (lewat battle:apply-status).
+const INV_TYPE_TO_ACTION = { heal: 'heal', damage: 'damage', buff: 'buff', debuff: 'debuff', mana_regen: 'mana_regen', sp_regen: 'sp_regen' };
+
 function useInventoryInBattle(idx) {
   const it = invState[idx];
   if (!it) return;
@@ -1083,15 +1143,44 @@ function useInventoryInBattle(idx) {
   const targetId = targetSel ? targetSel.value : '';
   if (!targetId) { alert('Pilih target dulu di panel Aksi Roll.'); return; }
   const from = val('f_nama_karakter') || NAME || 'Player';
-  let actionType = { heal: 'heal', damage: 'damage', buff: 'buff', debuff: 'debuff' }[it.type] || 'damage';
+  const status = document.getElementById('pActionStatus');
+
+  const consumeItem = () => {
+    if ((it.qty || 1) > 1) { it.qty = (it.qty || 1) - 1; } else { it.checked = true; }
+    renderInventory(); renderBattleInventory(); scheduleSave();
+  };
+
+  if (it.type === 'cure') {
+    // Cure: hapus semua status condition di target (pakai kondisi 'Normal' yang artinya bersih)
+    socket.emit('battle:apply-status', { code: CODE, targetId, condition: 'Normal', actorName: from }, (res) => {
+      if (res && res.ok) {
+        if (status) status.textContent = `✓ Item "${it.item}" dipakai: status condition target dibersihkan.`;
+        consumeItem();
+      } else if (status) status.textContent = res && res.error ? res.error : 'Gagal memakai item.';
+    });
+    return;
+  }
+
+  if (it.type === 'revive') {
+    // Revive: bersihkan kondisi fatal + heal sesuai formula (default 1d8 kalau kosong)
+    const formula = it.formula || '1d8';
+    socket.emit('battle:apply-status', { code: CODE, targetId, condition: 'Normal', actorName: from }, () => {
+      socket.emit('battle:roll-action', { code: CODE, targetId, actionType: 'heal', formula, actorName: from, note: `Item Revive: ${it.item}` }, (res) => {
+        if (res && res.ok) {
+          if (status) status.textContent = `⚕ Item "${it.item}" dipakai: kondisi fatal dibersihkan & heal ${formula} = ${res.roll.total}.`;
+          consumeItem();
+        } else if (status) status.textContent = res && res.error ? res.error : 'Gagal memakai item.';
+      });
+    });
+    return;
+  }
+
+  const actionType = INV_TYPE_TO_ACTION[it.type] || 'damage';
   const formula = it.formula || '1';
   socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName: from, note: `Item: ${it.item}` }, (res) => {
-    const status = document.getElementById('pActionStatus');
     if (res && res.ok) {
       if (status) status.textContent = `✓ Item "${it.item}" dipakai: ${formula} = ${res.roll.total}.`;
-      // Kurangi qty
-      if ((it.qty || 1) > 1) { it.qty = (it.qty || 1) - 1; } else { it.checked = true; }
-      renderInventory(); renderBattleInventory(); scheduleSave();
+      consumeItem();
     } else {
       if (status) status.textContent = res && res.error ? res.error : 'Gagal memakai item.';
     }

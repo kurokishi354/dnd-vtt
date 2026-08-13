@@ -21,9 +21,11 @@
   .attr-trait-applies { font-size:11px; color:var(--gold); }
 
   /* ---- Companion tab ---- */
-  .companion-card { border:1px solid var(--gold); border-radius:8px; padding:10px; margin-bottom:10px; position:relative; }
-  .companion-card-title { font-weight:700; color:var(--navy); font-size:14px; margin-bottom:6px; }
-  .companion-remove { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--crimson-bright); font-size:18px; cursor:pointer; }
+  .companion-card { border:1px solid var(--gold); border-radius:8px; padding:10px 12px; margin-bottom:10px; position:relative; background:#fffdf7; box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 2px 5px rgba(0,0,0,.06); transition:box-shadow .15s ease; }
+  .companion-card:hover { box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 3px 8px rgba(0,0,0,.1); }
+  .companion-card-title { font-weight:700; color:var(--navy); font-size:14px; margin-bottom:6px; padding-right:26px; }
+  .companion-remove { position:absolute; top:8px; right:8px; width:26px; height:26px; display:flex; align-items:center; justify-content:center; background:rgba(122,46,46,.08); border:1px solid transparent; border-radius:50%; color:var(--crimson-bright); font-size:16px; line-height:1; cursor:pointer; transition:background .15s ease, border-color .15s ease; }
+  .companion-remove:hover { background:rgba(122,46,46,.16); border-color:var(--crimson-bright); }
 
   /* ---- Inventory dynamic ---- */
   .inv-row-v2 { border:1px dashed var(--gold); border-radius:6px; padding:8px; margin-bottom:6px; }
@@ -35,22 +37,29 @@
   .map-tab-bar button { padding:5px 12px; border-radius:4px 4px 0 0; border:1px solid var(--gold); background:var(--parchment-dark); cursor:pointer; font-size:13px; }
   .map-tab-bar button.active { background:var(--gold); color:#fff; }
 
-  /* ---- Zoom controls ---- */
-  .map-zoom-bar { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
-  .map-zoom-bar button { padding:4px 10px; font-size:13px; }
+  /* ---- Map toolbar row (fit-to-image, no zoom) ---- */
+  .map-toolbar-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; background:#1c1e26; border:1px solid #3a3d46; border-radius:6px; padding:7px 10px; }
+  .map-toolbar-row .hint { color:#c9c2a8; margin:0; }
 
   /* ---- Fog of war (canvas, disinkron dari brush DM) ---- */
   .fog-layer { position:absolute; inset:0; z-index:4; pointer-events:none; width:100%; height:100%; }
 
-  /* ---- VTT-style map canvas (Foundry/Roll20-ish) ---- */
-  .vtt-canvas { background:#14161c; border:1px solid #3a3d46; border-radius:8px; box-shadow:inset 0 0 40px rgba(0,0,0,.6); }
-  .vtt-zoom-bar { background:#1c1e26; border:1px solid #3a3d46; border-radius:6px; padding:6px 10px; }
-  .vtt-zoom-bar .hint { color:#c9c2a8; }
-  .vtt-zoom-label { font-weight:700; color:var(--gold-bright); }
+  /* ---- Inventory slot counter ---- */
+  .inv-slot-counter { font-size:12px; color:var(--ink-soft); }
+  .inv-slot-counter.full { color:var(--crimson-bright); font-weight:700; }
 
-  /* ---- Name tag on token ---- */
-  .token-nametag { position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.78); color:#f0e0a0; font-size:10px; white-space:nowrap; padding:2px 5px; border-radius:3px; pointer-events:none; }
-  .token-img { width:100%; height:100%; border-radius:50%; object-fit:cover; }
+  /* ---- Shop tab ---- */
+  .shop-card { border:1px solid var(--gold); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fffdf7; box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 2px 5px rgba(0,0,0,.06); transition:box-shadow .15s ease; }
+  .shop-card:hover { box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 3px 8px rgba(0,0,0,.1); }
+  .shop-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .shop-card-name { font-weight:700; color:var(--navy); font-size:14px; }
+  .shop-card-price { font-family:'Cinzel',serif; color:var(--gold); font-weight:700; white-space:nowrap; }
+  .shop-card-desc { font-size:12px; color:var(--ink-soft); margin:4px 0 6px; }
+  .shop-card-buy-row { display:flex; gap:6px; align-items:center; }
+  .shop-card-buy-row input[type=number] { max-width:64px; flex:none; }
+  .shop-buy-btn:disabled { opacity:.5; cursor:not-allowed; }
+  .gold-display-bar { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:var(--navy); border:1px solid var(--gold); border-radius:6px; margin-bottom:10px; }
+  .gold-display-bar .gold-amount { font-family:'Cinzel',serif; color:var(--gold-bright); font-size:18px; font-weight:700; }
 
   /* ---- Chat color ---- */
   .chat-log .entry.dm { color: #1a4fa0; font-weight:600; }
@@ -110,6 +119,7 @@
     <button id="tabBtnBattle">⚔ Battle</button>
     <button id="tabBtnMap">🗺 Peta &amp; Battle</button>
     <button id="tabBtnCompanion">🐾 Companion</button>
+    <button id="tabBtnShop">🛒 Shop</button>
   </div>
 
   <!-- ===== TAB: SHEET ===== -->
@@ -201,9 +211,12 @@
 
       <div class="panel">
         <div class="panel-header">🎒 Item Inventory <span class="hint" id="invCountLabel" style="color:var(--gold-bright); text-transform:none;"></span></div>
-        <p class="hint" style="margin-bottom:6px;">Item bisa digunakan langsung di Battle — pilih item lalu tekan "Pakai" saat giliran.</p>
+        <p class="hint" style="margin-bottom:6px;">Item bisa digunakan langsung di Battle — pilih item lalu tekan "Pakai" saat giliran. Efek bisa ke HP, MP, maupun SP.</p>
         <div id="inventoryContainer" class="inv-list"></div>
-        <button type="button" id="btnAddInvSlot" class="secondary small" style="margin-top:6px;">+ Tambah Slot Item</button>
+        <div class="row" style="align-items:center; margin-top:6px;">
+          <button type="button" id="btnAddInvSlot" class="secondary small">+ Tambah Slot Item</button>
+          <span class="inv-slot-counter" id="invSlotCounter"></span>
+        </div>
       </div>
 
       <div class="panel">
@@ -396,21 +409,20 @@
     </div>
     <div class="panel">
       <div class="panel-header">🗺 Peta Pertempuran</div>
-      <div class="map-zoom-bar vtt-zoom-bar">
-        <span class="hint">Scroll/pinch untuk zoom · drag untuk geser</span>
-        <button id="btnMapZoomReset" class="small secondary">↺ Reset View</button>
-        <span class="hint vtt-zoom-label" id="mapZoomLabel">100%</span>
+      <div class="map-toolbar-row">
+        <span class="hint">Peta menyesuaikan ukuran gambar aslinya — geser token langsung di atasnya.</span>
         <label class="hint" style="margin-left:auto; display:flex; align-items:center; gap:4px;">
           <input type="checkbox" id="pFogToggle" checked style="width:auto;"> Tampilkan Fog of War
         </label>
       </div>
-      <div class="map-wrap vtt-canvas" id="pMapWrap" style="overflow:hidden; position:relative; cursor:grab;">
-        <div id="pMapInner" style="position:absolute; transform-origin:0 0; will-change:transform;">
+      <div class="map-wrap no-image" id="pMapWrap">
+        <img id="pMapImg" class="map-img" src="" alt="" style="display:none;">
+        <div id="pMapInner" class="map-overlay">
           <div class="map-grid-overlay" id="pGridOverlay"></div>
           <canvas id="pFogLayer" class="fog-layer" style="display:none; position:absolute; inset:0;"></canvas>
         </div>
       </div>
-      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (berwarna emas) bisa kamu geser sendiri. Area gelap adalah kabut yang belum dibuka DM.</p>
+      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (bertanda emas) bisa kamu geser sendiri. Area gelap adalah kabut yang belum dibuka DM.</p>
     </div>
   </div><!-- /tab-map -->
 
@@ -427,6 +439,19 @@
       <button type="button" id="btnAddCompanion" class="secondary small" style="margin-top:6px;">+ Tambah Companion Manual</button>
     </div>
   </div><!-- /tab-companion -->
+
+  <!-- ===== TAB: SHOP ===== -->
+  <div id="tab-shop" style="display:none;">
+    <div class="gold-display-bar">
+      <span class="hint" style="color:#e8dfc8; margin:0;">🪙 Gold Kamu</span>
+      <span class="gold-amount" id="shopGoldDisplay">0</span>
+    </div>
+    <div class="panel">
+      <div class="panel-header">🛒 Katalog Toko</div>
+      <p class="hint" style="margin-bottom:8px;">Item yang dibeli otomatis masuk ke Item Inventory di tab Sheet, dan gold kamu berkurang sesuai harga.</p>
+      <div id="shopItemList"><p class="hint">DM belum menambahkan item ke toko.</p></div>
+    </div>
+  </div><!-- /tab-shop -->
 
 </div><!-- /sheet -->
 

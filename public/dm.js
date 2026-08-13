@@ -91,6 +91,9 @@ socket.on('sheet-updated', ({ playerId, sheet }) => {
   if (playerId === openPlayerId) {
     document.getElementById('playerModalBody').innerHTML = renderSheetReadonly(sheet);
     document.getElementById('currentGoldLabel').textContent = sheet.gold || '0';
+    const extraSlots = parseInt(sheet.inv_extra_slots, 10) || 0;
+    const usedSlots = Array.isArray(sheet.inventory) ? sheet.inventory.length : 0;
+    document.getElementById('invSlotLabel').textContent = `${usedSlots}/${INV_BASE_SLOTS_DM + extraSlots}`;
   }
 });
 socket.on('player-online', ({ id, online }) => {
@@ -148,6 +151,7 @@ function renderPlayers() {
   });
 }
 
+const INV_BASE_SLOTS_DM = 10;
 function openPlayerModal(playerId) {
   openPlayerId = playerId;
   const pData = (state.playersList || []).find(p => p.id === playerId);
@@ -159,10 +163,28 @@ function openPlayerModal(playerId) {
   document.getElementById('progress_lv').value = sheet.lv || '';
   document.getElementById('progress_exp').value = sheet.exp || '';
   document.getElementById('progress_kelas_exp').value = sheet.kelas_exp || '';
+  const extraSlots = parseInt(sheet.inv_extra_slots, 10) || 0;
+  const usedSlots = Array.isArray(sheet.inventory) ? sheet.inventory.length : 0;
+  document.getElementById('invSlotLabel').textContent = `${usedSlots}/${INV_BASE_SLOTS_DM + extraSlots}`;
+  document.getElementById('invExtraSlots_amount').value = extraSlots;
+  document.getElementById('invSlotsStatus').textContent = '';
   renderClassUnlockList(fullData?.unlockedClasses || []);
   document.getElementById('playerModalBody').innerHTML = renderSheetReadonly(sheet);
   document.getElementById('playerModal').classList.add('show');
 }
+document.getElementById('btnSetInvSlots').onclick = () => {
+  const playerId = document.getElementById('giveItem_playerId').value;
+  const extraSlots = parseInt(document.getElementById('invExtraSlots_amount').value, 10) || 0;
+  socket.emit('dm:set-inv-slots', { code: CODE, playerId, extraSlots }, (res) => {
+    const statusEl = document.getElementById('invSlotsStatus');
+    if (res?.ok) {
+      statusEl.textContent = `✓ Total slot sekarang: ${res.totalSlots}.`;
+      document.getElementById('invSlotLabel').textContent = document.getElementById('invSlotLabel').textContent.split('/')[0] + '/' + res.totalSlots;
+    } else {
+      statusEl.textContent = res?.error || 'Gagal.';
+    }
+  });
+};
 document.getElementById('btnClosePlayerModal').onclick = () => { document.getElementById('playerModal').classList.remove('show'); openPlayerId = null; };
 
 function confirmDeletePlayer(playerId) {
@@ -530,35 +552,14 @@ document.getElementById('btnDeleteClass').onclick = () => {
   document.getElementById('classModal').classList.remove('show');
 };
 
-// =============================== MAP & GRID ===========================
+// =============================== MAP & GRID (fit-to-image, no zoom) ====
 const mapWrap = document.getElementById('mapWrap');
+const mapImg = document.getElementById('mapImg');
 const mapInner = document.getElementById('mapInner');
 const gridOverlay = document.getElementById('gridOverlay');
 
 socket.on('map-updated', (map) => { state.map = map; if (document.getElementById('tab-dm-map').style.display !== 'none') renderMap(); });
-
-// DM Map zoom state (hanya scroll/pinch buat zoom + drag buat geser — tombol +/- dihapus krn gak kepakai)
-let dmMapZoom = 1, dmPanX = 0, dmPanY = 0, dmIsPanning = false, dmPanSX = 0, dmPanSY = 0;
-
-document.getElementById('btnDmMapZoomReset').onclick = () => { dmMapZoom = 1; dmPanX = 0; dmPanY = 0; applyDmMapTransform(); };
-mapWrap.addEventListener('wheel', (e) => {
-  if (e.target.closest('.token')) return;
-  e.preventDefault();
-  dmMapZoom = Math.max(0.25, Math.min(4, dmMapZoom + (e.deltaY > 0 ? -0.1 : 0.1)));
-  applyDmMapTransform();
-}, { passive: false });
-mapWrap.addEventListener('mousedown', (e) => {
-  if (e.target.closest('.token')) return;
-  if (fogBrushActive) return; // waktu kuas fog aktif, mousedown dipakai buat melukis, bukan geser
-  dmIsPanning = true; dmPanSX = e.clientX - dmPanX; dmPanSY = e.clientY - dmPanY; mapWrap.style.cursor = 'grabbing';
-});
-window.addEventListener('mousemove', (e) => { if (!dmIsPanning) return; dmPanX = e.clientX - dmPanSX; dmPanY = e.clientY - dmPanSY; applyDmMapTransform(); });
-window.addEventListener('mouseup', () => { dmIsPanning = false; mapWrap.style.cursor = fogBrushActive ? 'crosshair' : 'grab'; });
-
-function applyDmMapTransform() {
-  mapInner.style.transform = `translate(${dmPanX}px,${dmPanY}px) scale(${dmMapZoom})`;
-  document.getElementById('dmMapZoomLabel').textContent = Math.round(dmMapZoom * 100) + '%';
-}
+mapImg.addEventListener('load', () => { if (document.getElementById('tab-dm-map').style.display !== 'none') renderFogCanvasDm(); });
 
 // =============================== FOG OF WAR (brush reveal) =============
 const FOG_COLS = 30, FOG_ROWS = 20; // resolusi logis kabut, independen dari grid visual — konsisten di semua layar
@@ -666,28 +667,17 @@ document.getElementById('tokenImageUpload').addEventListener('change', (e) => {
   });
 });
 
-const _mapAspectCache = {};
-function setMapAspectRatio(wrapEl, imageUrl) {
-  if (!imageUrl) { wrapEl.style.aspectRatio = '16/10'; wrapEl.style.minHeight = '400px'; return; }
-  if (_mapAspectCache[imageUrl]) { wrapEl.style.aspectRatio = _mapAspectCache[imageUrl]; return; }
-  const img = new Image();
-  img.onload = () => {
-    if (img.naturalWidth && img.naturalHeight) {
-      const ratio = `${img.naturalWidth}/${img.naturalHeight}`;
-      _mapAspectCache[imageUrl] = ratio;
-      wrapEl.style.aspectRatio = ratio;
-    }
-  };
-  img.src = imageUrl;
-}
-
 function renderMap() {
   const map = state.map || {};
-  mapInner.style.backgroundImage = map.imageUrl ? `url(${map.imageUrl})` : 'none';
-  mapInner.style.backgroundSize = 'cover';
-  mapInner.style.backgroundPosition = 'center';
-  if (!map.imageUrl) { mapInner.style.width = '100%'; mapInner.style.height = '500px'; }
-  setMapAspectRatio(mapInner, map.imageUrl);
+  if (map.imageUrl) {
+    mapImg.src = map.imageUrl;
+    mapImg.style.display = 'block';
+    mapWrap.classList.remove('no-image');
+  } else {
+    mapImg.removeAttribute('src');
+    mapImg.style.display = 'none';
+    mapWrap.classList.add('no-image');
+  }
   const size = map.gridSize || 50;
   if (map.gridVisible) {
     gridOverlay.style.backgroundImage =
@@ -698,6 +688,7 @@ function renderMap() {
   document.getElementById('gridVisible').checked = !!map.gridVisible;
   document.getElementById('fogVisible').checked = !!map.fogVisible;
   document.getElementById('fogLayerDm').style.display = map.fogVisible ? '' : 'none';
+  renderFogCanvasDm();
   renderTokens();
 }
 
@@ -805,26 +796,28 @@ function renderTokens() {
     const el = document.createElement('div');
     el.className = 'token draggable';
     el.style.left = tok.x + '%'; el.style.top = tok.y + '%';
-    el.style.position = 'absolute';
-    el.style.background = tok.imageUrl ? 'transparent' : (tok.color || '#555');
     el.dataset.id = tok.id;
 
-    if (tok.imageUrl) {
-      const img = document.createElement('img'); img.src = tok.imageUrl; img.className = 'token-img'; img.draggable = false;
-      el.appendChild(img);
-    } else {
-      el.textContent = (tok.label || '').slice(0, 2);
-    }
-
-    // Name tag
+    // Nama selalu tampil sebagai label di atas token — DM juga perlu gampang
+    // bedain siapa itu siapa waktu token numpuk di peta.
     const nametag = document.createElement('div'); nametag.className = 'token-nametag';
     nametag.textContent = tok.label || '';
     el.appendChild(nametag);
 
-    // Type border
-    if (tok.type === 'enemy') el.style.border = '2px solid #c0392b';
-    else if (tok.type === 'ally') el.style.border = '2px solid #27ae60';
-    else if (tok.type === 'npc') el.style.border = '2px solid #7b3fa0';
+    const circle = document.createElement('div');
+    circle.className = 'token-circle';
+    circle.style.background = tok.imageUrl ? 'transparent' : (tok.color || '#555');
+    if (tok.type === 'enemy') circle.style.borderColor = '#e07a6b';
+    else if (tok.type === 'ally') circle.style.borderColor = '#7bd39a';
+    else if (tok.type === 'npc') circle.style.borderColor = '#c9a3f0';
+
+    if (tok.imageUrl) {
+      const img = document.createElement('img'); img.src = tok.imageUrl; img.className = 'token-img'; img.draggable = false;
+      circle.appendChild(img);
+    } else {
+      circle.textContent = (tok.label || '').slice(0, 2);
+    }
+    el.appendChild(circle);
 
     el.title = (tok.label || '') + (tok.ownerId ? ' (milik player)' : '');
     el.addEventListener('mousedown', (e) => { draggingTokenId = tok.id; e.preventDefault(); e.stopPropagation(); });

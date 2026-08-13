@@ -294,31 +294,54 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 @keyframes toast-in { from { transform: translateX(30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes toast-out { to { transform: translateX(30px); opacity: 0; } }
 
-/* ---------- shared: map, tokens, battle/turn tracker ---------- */
+/* ---------- shared: map, tokens, battle/turn tracker ----------
+   Map kini "fit-to-image": .map-wrap membungkus <img> asli (in-flow,
+   width:100% height:auto) jadi tingginya otomatis ngikutin rasio gambar
+   apa adanya — gak ada crop, gak ada zoom/pan. Overlay (grid/fog/token)
+   nempel persis di atasnya lewat inset:0. Kalau belum ada gambar map,
+   .map-wrap pakai aspect-ratio placeholder biar tetap ada area buat token. */
 .map-wrap {
-  position: relative; width: 100%; aspect-ratio: 16/10;
+  position: relative; width: 100%;
   background: #14161c; border: 1px solid #3a3d46; border-radius: 8px;
-  overflow: hidden; background-size: contain; background-repeat: no-repeat; background-position: center;
-  max-height: 78vh;
+  overflow: hidden;
   background-image:
-    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
-  background-size: 24px 24px, 24px 24px;
+    linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 26px 26px, 26px 26px;
 }
+.map-wrap.no-image { aspect-ratio: 16/9; }
+.map-wrap .map-img { display: block; width: 100%; height: auto; pointer-events: none; user-select: none; }
+.map-wrap .map-overlay { position: absolute; inset: 0; }
 .map-grid-overlay { position: absolute; inset: 0; pointer-events: none; }
+/* .token = kontainer posisi (gak boleh overflow:hidden, soalnya nametag
+   nempel DI LUAR kotak lingkarannya, di atas token). Lingkaran visualnya
+   sendiri ada di .token-circle (child), yang overflow:hidden-nya biar
+   gambar/inisial rapi kebentuk bulat. */
 .token {
-  position: absolute; width: 40px; height: 40px; border-radius: 50%;
-  border: 2px solid #fff; box-shadow: 0 3px 10px rgba(0,0,0,.65), 0 0 0 2px rgba(0,0,0,.3);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: #fff;
+  position: absolute; width: 40px; height: 40px;
   cursor: default; transform: translate(-50%, -50%);
-  user-select: none; text-shadow: 0 1px 2px rgba(0,0,0,.8);
-  transition: box-shadow .15s ease;
+  user-select: none; z-index: 5;
 }
 .token.draggable { cursor: grab; }
 .token.draggable:active { cursor: grabbing; }
-.token.draggable:hover { box-shadow: 0 3px 10px rgba(0,0,0,.65), 0 0 0 3px rgba(255,255,255,.35); }
-.token.mine { box-shadow: 0 0 0 3px var(--gold-bright), 0 3px 10px rgba(0,0,0,.65); }
+.token-circle {
+  width: 100%; height: 100%; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 3px 10px rgba(0,0,0,.65), 0 0 0 2px rgba(0,0,0,.3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  transition: box-shadow .15s ease; overflow: hidden;
+}
+.token.draggable:hover .token-circle { box-shadow: 0 3px 10px rgba(0,0,0,.65), 0 0 0 3px rgba(255,255,255,.35); }
+.token.mine .token-circle { box-shadow: 0 0 0 3px var(--gold-bright), 0 3px 10px rgba(0,0,0,.65); }
+.token-nametag {
+  position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  background: rgba(10,10,16,.9); color: #f5e6b8; font-size: 11px; font-weight: 600;
+  white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis;
+  padding: 2px 7px; border-radius: 4px; pointer-events: none; z-index: 10;
+  box-shadow: 0 2px 4px rgba(0,0,0,.5); border: 1px solid rgba(224,189,122,.4);
+}
+.token-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
 
 .mini-bar-wrap { flex:1; height:10px; border:1px solid var(--gold); border-radius:6px; overflow:hidden; background:var(--parchment-dark); }
 .mini-bar-fill { height:100%; width:0%; transition:width .2s ease; }
@@ -509,6 +532,38 @@ button:disabled { opacity: .45; cursor: not-allowed; }
      bottom padding so content isn't hidden behind it (it wraps to
      two rows on narrow screens) --- */
   .sheet-with-musicbar { padding-bottom: 96px; }
+
+  /* --- page-tabs sekarang bisa lebih dari 4 tombol (mis. + Shop) —
+     biar gak kepenyet, izinkan wrap 2 baris di layar sempit --- */
+  .page-tabs { flex-wrap: wrap; gap: 6px; }
+  .page-tabs button { flex: 1 1 30%; min-width: 90px; }
+  .page-tabs.sub-tabs button { flex: 1 1 45%; }
+
+  /* --- shop cards: tombol beli & qty jangan sampai mepet/kepotong --- */
+  .shop-card-buy-row { flex-wrap: wrap; }
+  .shop-card-buy-row .shop-buy-btn { flex: 1 1 100px; }
+  .gold-display-bar { padding: 10px 12px; }
+
+  /* --- inventory row v2: header wrap biar checkbox/qty/hapus gak mepet --- */
+  .inv-row-v2 .inv-header { flex-wrap: wrap; }
+  .inv-row-v2 .inv-header input[type=text] { flex: 1 1 140px; }
+
+  /* --- companion & npc cards: padding lebih kecil, tombol hapus tetap gampang dipencet --- */
+  .companion-card { padding: 10px 12px; }
+  .companion-remove { width: 30px; height: 30px; font-size: 20px; }
+
+  /* --- battle status rows: biarin wrap alih-alih numpuk horizontal --- */
+  .status-bar-row { row-gap: 6px; }
+
+  /* --- give-item-box (modal DM) lebih lapang di layar sempit --- */
+  .give-item-box { padding: 10px; }
+
+  /* --- data table tetap scrollable horizontal, tapi font sedikit diperbesar biar kebaca --- */
+  .data-table { font-size: 12.5px; }
+  .data-table th, .data-table td { padding: 7px 8px; }
+
+  /* --- map toolbar row: biar wrap rapi & gak ada elemen kepotong --- */
+  .map-toolbar-row, .map-toolbar { gap: 6px; }
 }
 
 /* ================================================================
@@ -637,30 +692,6 @@ button.secondary { background: rgba(255,255,255,.25); box-shadow: none; }
 /* Sub-tabs */
 .page-tabs.sub-tabs { margin-top: 0; margin-bottom: 10px; }
 .page-tabs.sub-tabs button { font-size: 12px; padding: 5px 12px; }
-
-/* Token on map */
-.token {
-  position: absolute; transform: translate(-50%, -50%);
-  width: 36px; height: 36px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; color: #fff;
-  border: 2px solid rgba(255,255,255,.5);
-  box-shadow: 0 2px 6px rgba(0,0,0,.5);
-  cursor: default; user-select: none; z-index: 5;
-  overflow: hidden;
-}
-.token.draggable { cursor: grab; }
-.token.draggable:active { cursor: grabbing; }
-.token.mine { border-color: var(--gold-bright) !important; box-shadow: 0 0 0 2px var(--gold-bright), 0 2px 8px rgba(0,0,0,.5); }
-
-/* Map wrap */
-.map-wrap {
-  border: 1px solid #3a3d46; border-radius: 8px;
-  background: #14161c; min-height: 300px;
-  overflow: hidden; position: relative;
-  box-shadow: inset 0 0 40px rgba(0,0,0,.6);
-}
-.map-grid-overlay { pointer-events: none; }
 
 /* HP bar on sheet */
 .hp-bar-wrap { height: 10px; background: rgba(0,0,0,.2); border-radius: 5px; overflow: hidden; margin-top: 2px; }

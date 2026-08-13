@@ -168,7 +168,16 @@ function ensurePlayerDefaults(player) {
   if (player.sheet.skills && Array.isArray(player.sheet.skills.passive) && player.sheet.skills.passive.length > 2) {
     player.sheet.skills.passive = player.sheet.skills.passive.slice(0, 2);
   }
+  // Inventory: cap slot dasar 10 + slot tambahan pemberian DM (data lama yang lebih banyak tetap dipertahankan,
+  // tapi gak akan bisa nambah lagi dari sisi player kalau udah lewat cap - itu diatur di client + validasi update-sheet)
+  if (!Array.isArray(player.sheet.inventory)) player.sheet.inventory = [];
+  if (typeof player.sheet.inv_extra_slots !== 'number') player.sheet.inv_extra_slots = parseInt(player.sheet.inv_extra_slots, 10) || 0;
   return player;
+}
+
+const INV_BASE_SLOTS = 10;
+function invMaxSlotsForPlayer(player) {
+  return INV_BASE_SLOTS + (parseInt(player.sheet.inv_extra_slots, 10) || 0);
 }
 
 function blankSheet(name) {
@@ -200,7 +209,8 @@ function blankSheet(name) {
       { nama: '', atk_bonus: '', damage: '' },
       { nama: '', atk_bonus: '', damage: '' }
     ],
-    inventory: Array.from({ length: 8 }, () => ({ checked: false, item: '' })), // tidak dibatasi, bisa ditambah dari client
+    inventory: Array.from({ length: 6 }, () => ({ checked: false, item: '', desc: '', type: 'misc', qty: 1 })), // cap 10 slot di client, DM bisa kasih slot tambahan
+    inv_extra_slots: 0, // slot tambahan yang dikasih DM (di atas 10 slot dasar)
     gold: '',
     companions: [],
     skills: {
@@ -594,6 +604,14 @@ io.on('connection', (socket) => {
     const session = sessions[code];
     if (!session || !session.players[playerId]) return;
     if (session.players[playerId].socketId !== socket.id) return; // hanya pemilik yang boleh update
+    const existing = session.players[playerId];
+    // inv_extra_slots murni kontrol DM — player gak boleh ubah dari sisi client, apapun yang dikirim diabaikan
+    sheet.inv_extra_slots = existing.sheet.inv_extra_slots || 0;
+    // Cap inventory ke slot maksimum (10 dasar + extra dari DM) biar gak bisa dibypass dari client
+    if (Array.isArray(sheet.inventory)) {
+      const maxSlots = INV_BASE_SLOTS + (parseInt(sheet.inv_extra_slots, 10) || 0);
+      if (sheet.inventory.length > maxSlots) sheet.inventory = sheet.inventory.slice(0, maxSlots);
+    }
     session.players[playerId].sheet = sheet;
     saveSessionsDebounced(code);
     io.to('dm-' + code).emit('sheet-updated', { playerId, sheet });
@@ -807,6 +825,84 @@ io.on('connection', (socket) => {
       io.to(player.socketId).emit('your-sheet-updated', { sheet: player.sheet, note: `DM mengatur ulang gold-mu menjadi ${val}.` });
     }
     cb && cb({ ok: true, gold: val });
+  });
+
+  // === DM: kasih slot inventory tambahan ke player (di atas 10 slot dasar) ===
+  socket.on('dm:set-inv-slots', ({ code, playerId, extraSlots }, cb) => {
+    const session = sessions[code];
+    if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    const val = parseInt(extraSlots, 10);
+    if (isNaN(val) || val < 0) return cb && cb({ ok: false, error: 'Jumlah slot tidak valid.' });
+    const player = session.players[playerId];
+    player.sheet.inv_extra_slots = val;
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId, sheet: player.sheet });
+    if (player.socketId) {
+      io.to(player.socketId).emit('your-sheet-updated', {
+        sheet: player.sheet,
+        note: `DM memberi ${val} slot inventory tambahan (total: ${INV_BASE_SLOTS + val} slot).`
+      });
+    }
+    cb && cb({ ok: true, inv_extra_slots: val, totalSlots: INV_BASE_SLOTS + val });
+  });
+
+  // === Player: beli item dari Shop — potong gold, isi ke inventory, kurangi stok kalau terbatas ===
+  socket.on('player:buy-item', ({ code, playerId, itemId, qty }, cb) => {
+    const session = sessions[code];
+    if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    if (session.players[playerId].socketId !== socket.id) return cb && cb({ ok: false, error: 'Tidak diizinkan.' });
+    ensureSessionDefaults(session);
+    const item = session.shop.items[itemId];
+    if (!item) return cb && cb({ ok: false, error: 'Item tidak ditemukan di toko.' });
+
+    const buyQty = Math.max(1, parseInt(qty, 10) || 1);
+    const price = parseFloat(item.harga) || 0;
+    const totalPrice = price * buyQty;
+
+    const player = session.players[playerId];
+    const currentGold = parseFloat(player.sheet.gold) || 0;
+    if (currentGold < totalPrice) return cb && cb({ ok: false, error: 'Gold tidak cukup.' });
+
+    // Cek & potong stok kalau item ini stoknya terbatas (bukan '~' / kosong)
+    let stokLimited = false, stokNum = null;
+    if (item.stok !== '' && item.stok != null && !isNaN(parseInt(item.stok, 10))) {
+      stokLimited = true; stokNum = parseInt(item.stok, 10);
+      if (stokNum < buyQty) return cb && cb({ ok: false, error: 'Stok tidak cukup.' });
+    }
+
+    if (!Array.isArray(player.sheet.inventory)) player.sheet.inventory = [];
+    const maxSlots = invMaxSlotsForPlayer(player);
+    // Tumpuk ke slot yang sudah ada (item sama, dari shop, belum dipakai) kalau ada, biar gak makan slot baru terus
+    let existing = player.sheet.inventory.find(it => it.item === item.nama && it.fromShop && !it.checked);
+    if (existing) {
+      existing.qty = (parseInt(existing.qty, 10) || 1) + buyQty;
+    } else {
+      if (player.sheet.inventory.length >= maxSlots) {
+        return cb && cb({ ok: false, error: `Inventory penuh (maks ${maxSlots} slot). Kosongkan slot dulu atau minta DM tambah slot.` });
+      }
+      player.sheet.inventory.push({
+        checked: false, item: item.nama, desc: item.deskripsi || '', type: 'misc', qty: buyQty, fromShop: true
+      });
+    }
+
+    if (stokLimited) { item.stok = stokNum - buyQty; }
+    player.sheet.gold = String(currentGold - totalPrice);
+
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId, sheet: player.sheet });
+    io.to('dm-' + code).emit('players-update', publicPlayerList(session));
+    io.to('room-' + code).emit('shop-updated', session.shop.items);
+
+    const logEntry = {
+      id: genId('log'), from: 'Sistem',
+      text: `🛒 ${player.sheet.nama_karakter || player.name} membeli ${item.nama}${buyQty > 1 ? ' x' + buyQty : ''} seharga ${totalPrice} gold.`,
+      type: 'system', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+
+    cb && cb({ ok: true, sheet: player.sheet });
   });
 
   // === DM: kelola katalog Kelas sesi (CRUD) ===
