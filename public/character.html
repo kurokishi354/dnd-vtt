@@ -80,11 +80,94 @@
 
   /* ---- Skills merged (active+passive) ---- */
   .skill-section-label { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); margin:6px 0 2px; border-bottom:1px solid rgba(220,190,120,.3); padding-bottom:2px; }
+
+  /* ---- Story-telling: scene banner, dialog box, quest, recap, handout modal ---- */
+  .scene-banner {
+    position: relative; margin: 0 0 10px; border: 2px solid var(--gold); border-radius: 8px;
+    overflow: hidden; background: var(--navy); color: #f3ead2; display: none;
+  }
+  .scene-banner.show { display: block; }
+  .scene-banner-img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
+  .scene-banner-text { padding: 10px 14px; }
+  .scene-banner-title { font-family: 'Cinzel', serif; font-size: 18px; color: var(--gold-bright); letter-spacing: .04em; }
+  .scene-banner-desc { font-size: 13px; margin-top: 4px; color: #e8dfc8; }
+  .scene-banner-close { position: absolute; top: 6px; right: 8px; background: rgba(0,0,0,.35); border: none; color: #fff; border-radius: 50%; width: 26px; height: 26px; cursor: pointer; font-size: 14px; }
+
+  .dialogue-box {
+    position: fixed; left: 0; right: 0; bottom: 52px; z-index: 41;
+    display: none; justify-content: center; padding: 0 12px;
+  }
+  .dialogue-box.show { display: flex; }
+  .dialogue-box-inner {
+    max-width: 760px; width: 100%; background: var(--navy); border: 2px solid var(--gold);
+    border-radius: 10px 10px 0 0; padding: 12px 16px; display: flex; gap: 12px; align-items: flex-start;
+    box-shadow: 0 -4px 16px rgba(0,0,0,.3);
+  }
+  .dialogue-portrait { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold-bright); flex-shrink: 0; display: none; }
+  .dialogue-body { flex: 1; }
+  .dialogue-name { font-family: 'Cinzel', serif; color: var(--gold-bright); font-size: 14px; margin-bottom: 3px; }
+  .dialogue-text { color: #f3ead2; font-size: 13px; line-height: 1.5; }
+  .dialogue-close { flex-shrink: 0; align-self: flex-start; }
+
+  .quest-card { border:1px solid var(--gold); border-radius:6px; padding:8px 10px; margin-bottom:8px; background:#fffdf7; }
+  .quest-card-top { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px; }
+  .quest-card-title { font-weight:700; color:var(--navy); font-size:13px; }
+  .quest-status-badge { font-size:10px; padding:2px 8px; border-radius:10px; font-weight:700; }
+  .quest-status-badge.aktif { background:#e8d27a; color:#4a3c00; }
+  .quest-status-badge.selesai { background:var(--emerald); color:#eafff3; }
+  .quest-status-badge.gagal { background:var(--crimson); color:#fff2ee; }
+  .quest-card-desc { font-size:12px; color:var(--ink-soft); }
+
+  .story-recap-entry { padding:6px 4px; border-bottom:1px dotted var(--gold); font-size:12px; }
+  .story-recap-entry:last-child { border-bottom:none; }
+  .story-recap-entry .from { font-weight:700; color:var(--navy); }
+  .story-recap-entry .ts { color:var(--ink-soft); font-size:10px; margin-left:6px; }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: none; align-items: center; justify-content: center; z-index: 60; padding: 20px;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal-box {
+    background: var(--parchment); border: 3px solid var(--gold); border-radius: 10px;
+    max-width: 640px; width: 100%; max-height: 88vh; overflow-y: auto; padding: 16px;
+  }
+  .modal-box h2 { font-family:'Cinzel',serif; color: var(--navy); margin-bottom: 10px; }
+  .handout-img { max-width: 100%; border: 1px solid var(--gold); border-radius: 6px; margin-bottom: 10px; }
 </style>
 </head>
 <body>
 
 <div id="itemToast" class="item-toast"></div>
+
+<div id="sceneBanner" class="scene-banner">
+  <button type="button" class="scene-banner-close" id="btnSceneBannerClose">✖</button>
+  <img id="sceneBannerImg" class="scene-banner-img" style="display:none;" alt="">
+  <div class="scene-banner-text">
+    <div class="scene-banner-title" id="sceneBannerTitle"></div>
+    <div class="scene-banner-desc" id="sceneBannerDesc"></div>
+  </div>
+</div>
+
+<div id="dialogueBox" class="dialogue-box">
+  <div class="dialogue-box-inner">
+    <img id="dialoguePortraitImg" class="dialogue-portrait" alt="">
+    <div class="dialogue-body">
+      <div class="dialogue-name" id="dialogueNameEl"></div>
+      <div class="dialogue-text" id="dialogueTextEl"></div>
+    </div>
+    <button type="button" class="small secondary dialogue-close" id="btnDialogueClose">✖</button>
+  </div>
+</div>
+
+<div id="handoutModal" class="modal-backdrop">
+  <div class="modal-box">
+    <h2 id="handoutModalTitle">🎁 Dokumen</h2>
+    <img id="handoutModalImg" class="handout-img" style="display:none;" alt="">
+    <p id="handoutModalText" style="white-space:pre-wrap; font-size:13px;"></p>
+    <button type="button" id="btnHandoutModalClose" style="width:100%; margin-top:8px;">Tutup</button>
+  </div>
+</div>
 
 <div id="musicBar" class="music-bar">
   <button type="button" id="btnMusicUnlock" class="small">🔊 Aktifkan Musik</button>
@@ -121,6 +204,7 @@
     <button class="active" id="tabBtnSheet">📜 Sheet</button>
     <button id="tabBtnBattle">⚔ Battle</button>
     <button id="tabBtnMap">🗺 Peta &amp; Battle</button>
+    <button id="tabBtnStory">📖 Cerita</button>
     <button id="tabBtnCompanion">🐾 Companion</button>
     <button id="tabBtnShop">🛒 Shop</button>
   </div>
@@ -425,6 +509,19 @@
       <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (bertanda emas) bisa kamu geser sendiri. Area gelap adalah kabut yang belum dibuka DM.</p>
     </div>
   </div><!-- /tab-map -->
+
+  <!-- ===== TAB: CERITA (read-only: quest & recap) ===== -->
+  <div id="tab-story" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">📜 Quest / Objective</div>
+      <div id="pQuestList"><p class="hint">Belum ada quest.</p></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">⭐ Riwayat Cerita</div>
+      <p class="hint" style="margin-bottom:6px;">Ringkasan momen cerita — adegan, dialog NPC, quest, dan dokumen yang sudah terjadi di sesi ini.</p>
+      <div id="pStoryRecapList"><p class="hint">Belum ada momen cerita.</p></div>
+    </div>
+  </div><!-- /tab-story -->
 
   <!-- ===== TAB: COMPANION ===== -->
   <div id="tab-companion" style="display:none;">

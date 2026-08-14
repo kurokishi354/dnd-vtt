@@ -104,6 +104,27 @@
   .music-item .m-name { flex:1; font-size:13px; }
   .music-item button { flex:none; }
 
+  /* Story-telling: scene/dialogue status badges, quest list, recap feed */
+  #sceneStatusBadge.active, #dialogueStatusBadge.active { background: var(--emerald); color: #eafff3; }
+  .quest-card { border:1px solid var(--gold); border-radius:6px; padding:8px 10px; margin-bottom:8px; background:#fffdf7; }
+  .quest-card-top { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px; }
+  .quest-card-title { font-weight:700; color:var(--navy); font-size:13px; }
+  .quest-status-badge { font-size:10px; padding:2px 8px; border-radius:10px; font-weight:700; }
+  .quest-status-badge.aktif { background:#e8d27a; color:#4a3c00; }
+  .quest-status-badge.selesai { background:var(--emerald); color:#eafff3; }
+  .quest-status-badge.gagal { background:var(--crimson); color:#fff2ee; }
+  .quest-card-desc { font-size:12px; color:var(--ink-soft); margin-bottom:6px; }
+  .story-recap-entry { padding:6px 4px; border-bottom:1px dotted var(--gold); font-size:12px; }
+  .story-recap-entry:last-child { border-bottom:none; }
+  .story-recap-entry .from { font-weight:700; color:var(--navy); }
+  .story-recap-entry .ts { color:var(--ink-soft); font-size:10px; margin-left:6px; }
+  .chat-log .entry.narrative, .chat-log .entry.scene { color:#7a5a1e; font-style:italic; }
+  .chat-log .entry.dialogue { color:#1a7a6a; }
+  .chat-log .entry.quest { color:#8a5a00; font-weight:600; }
+  .chat-log .entry.handout { color:#6a2fa0; font-weight:600; }
+  .chat-log .entry.starred { background:rgba(220,190,120,.18); border-radius:4px; padding:2px 4px; }
+  .star-btn { border:none; background:transparent; cursor:pointer; font-size:12px; padding:0 2px; }
+
   /* Chat colors DM side */
   .chat-log .entry.dm { color: #1a4fa0; font-weight:600; }
   .chat-log .entry.system { color: #2a7a2a; font-style:italic; }
@@ -140,6 +161,7 @@
     <button id="tabBtnDmClasses">🎓 Kelas</button>
     <button id="tabBtnDmShop">🛒 Shop</button>
     <button id="tabBtnDmMusic">🎵 Musik</button>
+    <button id="tabBtnDmStory">📖 Cerita</button>
     <button id="tabBtnDmBattle">⚔ Battle</button>
     <button id="tabBtnDmMap">🗺 Peta &amp; Battle</button>
   </div>
@@ -332,6 +354,89 @@
       <div id="ytPlayer" style="position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none;"></div>
     </div>
   </div><!-- /tab-dm-music -->
+
+  <!-- ===== TAB: CERITA (Scene Banner, Dialog NPC, Quest, Handout, Recap) ===== -->
+  <div id="tab-dm-story" style="display:none;">
+  <div class="dm-grid cols-2-even">
+    <div>
+      <div class="panel">
+        <div class="panel-header">🎬 Scene Banner <span class="badge" id="sceneStatusBadge">tidak aktif</span></div>
+        <p class="hint" style="margin-bottom:6px;">Tampil sebagai banner besar di layar semua player — cocok buat transisi adegan ("Kalian tiba di Hutan Gelap…").</p>
+        <div class="field"><label>Judul Adegan</label><input type="text" id="scene_title" placeholder="mis. Gerbang Hutan Gelap"></div>
+        <div class="field"><label>Deskripsi</label><textarea id="scene_desc" rows="3" placeholder="Deskripsi singkat suasana adegan…"></textarea></div>
+        <div class="row" style="margin-bottom:6px;">
+          <input type="file" id="sceneImageUpload" accept="image/*" style="flex:1;">
+          <button type="button" class="small secondary" id="btnSceneImageClear">Hapus Gambar</button>
+        </div>
+        <img id="scenePreviewImg" style="display:none; max-width:100%; border:1px solid var(--gold); border-radius:6px; margin-bottom:8px;">
+        <div class="row">
+          <button type="button" class="small" id="btnSceneShow" style="flex:1;">📢 Tampilkan ke Semua</button>
+          <button type="button" class="small secondary" id="btnSceneHide" style="flex:1;">✖ Sembunyikan Banner</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">💬 Dialog NPC <span class="badge" id="dialogueStatusBadge">tidak aktif</span></div>
+        <p class="hint" style="margin-bottom:6px;">Muncul sebagai kotak dialog ala visual-novel di layar semua player.</p>
+        <div class="row">
+          <select id="dialogue_npcPick" style="flex:1;"><option value="">— Pilih dari NPC (opsional) —</option></select>
+        </div>
+        <div class="field"><label>Nama Pembicara</label><input type="text" id="dialogue_name" placeholder="mis. Penjaga Gerbang"></div>
+        <div class="row" style="margin-bottom:6px;">
+          <input type="file" id="dialoguePortraitUpload" accept="image/*" style="flex:1;">
+          <button type="button" class="small secondary" id="btnDialoguePortraitClear">Hapus Potret</button>
+        </div>
+        <img id="dialoguePreviewImg" style="display:none; width:64px; height:64px; object-fit:cover; border-radius:50%; border:2px solid var(--gold); margin-bottom:8px;">
+        <div class="field"><label>Dialog</label><textarea id="dialogue_text" rows="3" placeholder="Apa yang dikatakan NPC ini…"></textarea></div>
+        <div class="row">
+          <button type="button" class="small" id="btnDialogueSay" style="flex:1;">🗣 Katakan</button>
+          <button type="button" class="small secondary" id="btnDialogueHide" style="flex:1;">✖ Tutup Dialog</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <div class="panel-header">📜 Quest / Objective Tracker</div>
+        <input type="hidden" id="quest_id">
+        <div class="field"><label>Judul Quest</label><input type="text" id="quest_title" placeholder="mis. Temukan Kristal yang Hilang"></div>
+        <div class="field"><label>Deskripsi</label><textarea id="quest_desc" rows="2" placeholder="Detail/objektif quest…"></textarea></div>
+        <div class="row" style="margin-bottom:6px;">
+          <select id="quest_status" style="flex:1;">
+            <option value="aktif">🟡 Aktif</option>
+            <option value="selesai">✅ Selesai</option>
+            <option value="gagal">❌ Gagal</option>
+          </select>
+          <button type="button" class="small" id="btnQuestSave" style="flex:1;">💾 Simpan Quest</button>
+          <button type="button" class="small secondary" id="btnQuestResetForm">Batal Edit</button>
+        </div>
+        <div id="questList"><p class="hint">Belum ada quest.</p></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">🎁 Kirim Dokumen (Handout)</div>
+        <p class="hint" style="margin-bottom:6px;">Kirim gambar/surat/dokumen ke satu player atau semua sekaligus — muncul sebagai popup.</p>
+        <div class="field"><label>Untuk</label>
+          <select id="handout_target"><option value="">Semua Pemain</option></select>
+        </div>
+        <div class="field"><label>Judul</label><input type="text" id="handout_title" placeholder="mis. Surat dari Sang Raja"></div>
+        <div class="field"><label>Isi / Catatan</label><textarea id="handout_text" rows="3" placeholder="Isi dokumen (opsional)…"></textarea></div>
+        <div class="row" style="margin-bottom:6px;">
+          <input type="file" id="handoutImageUpload" accept="image/*" style="flex:1;">
+          <button type="button" class="small secondary" id="btnHandoutImageClear">Hapus Gambar</button>
+        </div>
+        <img id="handoutPreviewImg" style="display:none; max-width:100%; border:1px solid var(--gold); border-radius:6px; margin-bottom:8px;">
+        <button type="button" class="small" id="btnHandoutSend" style="width:100%;">🎁 Kirim Dokumen</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">⭐ Recap / Riwayat Cerita</div>
+    <p class="hint" style="margin-bottom:6px;">Berisi semua momen cerita (adegan, dialog, quest, dokumen) plus entri log yang ditandai ⭐ dari tab Utama — cocok untuk ringkasan "sebelumnya di sesi ini…".</p>
+    <div id="storyRecapList"><p class="hint">Belum ada momen cerita.</p></div>
+  </div>
+  </div><!-- /tab-dm-story -->
 
   <!-- ===== TAB: BATTLE (terpisah, ringkas) ===== -->
   <div id="tab-dm-battle" style="display:none;">

@@ -13,19 +13,21 @@ let state = {
   npcs: {}, classes: {}, map: {}, maps: {},
   tokens: {}, battle: { entries: {}, turn: { activeId: null, round: 1 } },
   music: { tracks: {}, playback: { trackId: null, isPlaying: false, startTs: 0, position: 0, volume: 0.7, loop: false } },
+  story: { scene: { title:'', desc:'', imageUrl:null, active:false }, dialogue: { npcName:'', npcPortrait:null, text:'', active:false }, quests: {} },
   shop: { items: {} }, log: [], notes: ''
 };
 let currentMapTabId = 'main';
 
 // =============================== TABS ==================================
 function showDmTab(name) {
-  ['main','players','npc','classes','shop','music','battle','map'].forEach(t => {
+  ['main','players','npc','classes','shop','music','story','battle','map'].forEach(t => {
     document.getElementById('tab-dm-' + t).style.display = t === name ? '' : 'none';
   });
   document.querySelectorAll('.page-tabs button').forEach(b => b.classList.remove('active'));
-  const btnMap = { main:'tabBtnDmMain', players:'tabBtnDmPlayers', npc:'tabBtnDmNpc', classes:'tabBtnDmClasses', shop:'tabBtnDmShop', music:'tabBtnDmMusic', battle:'tabBtnDmBattle', map:'tabBtnDmMap' };
+  const btnMap = { main:'tabBtnDmMain', players:'tabBtnDmPlayers', npc:'tabBtnDmNpc', classes:'tabBtnDmClasses', shop:'tabBtnDmShop', music:'tabBtnDmMusic', story:'tabBtnDmStory', battle:'tabBtnDmBattle', map:'tabBtnDmMap' };
   const btn = document.getElementById(btnMap[name]); if (btn) btn.classList.add('active');
   if (name === 'map') { renderMapTabs(); renderMap(); }
+  if (name === 'story') { renderStory(); }
 }
 document.getElementById('tabBtnDmMain').addEventListener('click', () => showDmTab('main'));
 document.getElementById('tabBtnDmPlayers').addEventListener('click', () => showDmTab('players'));
@@ -33,6 +35,7 @@ document.getElementById('tabBtnDmNpc').addEventListener('click', () => showDmTab
 document.getElementById('tabBtnDmClasses').addEventListener('click', () => showDmTab('classes'));
 document.getElementById('tabBtnDmShop').addEventListener('click', () => showDmTab('shop'));
 document.getElementById('tabBtnDmMusic').addEventListener('click', () => showDmTab('music'));
+document.getElementById('tabBtnDmStory').addEventListener('click', () => showDmTab('story'));
 document.getElementById('tabBtnDmBattle').addEventListener('click', () => showDmTab('battle'));
 document.getElementById('tabBtnDmMap').addEventListener('click', () => showDmTab('map'));
 
@@ -1237,24 +1240,32 @@ socket.on('chat:revealed', (entry) => {
   renderLog();
 });
 
+const STORY_LOG_TYPES = ['narrative','scene','dialogue','quest','handout'];
 function renderLog() {
   const box = document.getElementById('chatLog');
   box.innerHTML = state.log.map(e => {
     let cls;
-    if (e.from==='DM'||e.from==='dm') cls='dm';
+    if (STORY_LOG_TYPES.includes(e.type)) cls = e.type === 'quest' ? 'quest' : (e.type === 'handout' ? 'handout' : (e.type === 'dialogue' ? 'dialogue' : 'narrative'));
+    else if (e.from==='DM'||e.from==='dm') cls='dm';
     else if (e.from==='Sistema'||e.from==='system'||e.type==='system') cls='system';
     else if (e.type==='roll') cls='roll';
     else if (e.type==='damage') cls='damage';
     else if (e.type==='heal') cls='heal';
     else cls='player';
-    return `<div class="entry ${cls}${e.secret?' secret':''}">
+    return `<div class="entry ${cls}${e.secret?' secret':''}${e.starred?' starred':''}">
+      <button type="button" class="star-btn" data-id="${e.id}" title="Tandai penting untuk Recap">${e.starred?'⭐':'☆'}</button>
       <span class="from">${escapeHtml(e.from)}:</span> ${escapeHtml(e.text)}
+      ${e.imageUrl?`<div><img src="${e.imageUrl}" style="max-width:180px; border-radius:5px; border:1px solid var(--gold); margin-top:4px;"></div>`:''}
       ${e.secret?`<span class="secret-badge">🔒 rahasia</span> <button type="button" class="small secondary reveal-btn" data-id="${e.id}">👁 Perlihatkan</button>`:''}
       ${e.ts?`<span class="ts">${new Date(e.ts).toLocaleTimeString()}</span>`:''}
     </div>`;
   }).join('')||'<p class="hint">Belum ada log.</p>';
   box.scrollTop = box.scrollHeight;
   box.querySelectorAll('.reveal-btn').forEach(btn => { btn.onclick=()=>socket.emit('dm:reveal-roll',{code:CODE,id:btn.dataset.id}); });
+  box.querySelectorAll('.star-btn').forEach(btn => { btn.onclick=()=>{
+    const entry = state.log.find(e=>e.id===btn.dataset.id); if (!entry) return;
+    socket.emit('dm:log-star',{code:CODE,id:entry.id,starred:!entry.starred});
+  }; });
 }
 
 const DICE_TYPES = [4,6,8,10,12,20,100];
@@ -1407,11 +1418,193 @@ document.getElementById('sessionNotes').addEventListener('input', ()=>{
   notesSaveTimer=setTimeout(()=>{ socket.emit('dm:save-notes',{code:CODE,notes:document.getElementById('sessionNotes').value},(r)=>{ if(r?.ok) document.getElementById('notesStatus').textContent='tersimpan'; }); },1200);
 });
 
+// =============================== STORY (Scene / Dialog / Quest / Handout) ===
+let sceneImageData = null;
+let dialoguePortraitData = null;
+let handoutImageData = null;
+
+function renderStoryStatusBadges() {
+  const scene = (state.story && state.story.scene) || {};
+  const dlg = (state.story && state.story.dialogue) || {};
+  const sBadge = document.getElementById('sceneStatusBadge');
+  if (sBadge) { sBadge.textContent = scene.active ? 'tampil' : 'tidak aktif'; sBadge.classList.toggle('active', !!scene.active); }
+  const dBadge = document.getElementById('dialogueStatusBadge');
+  if (dBadge) { dBadge.textContent = dlg.active ? 'tampil' : 'tidak aktif'; dBadge.classList.toggle('active', !!dlg.active); }
+}
+
+function renderStory() {
+  renderStoryStatusBadges();
+  populateDialogueNpcSelect();
+  populateHandoutTargetSelect();
+  renderQuestList();
+  renderStoryRecap();
+}
+
+function populateDialogueNpcSelect() {
+  const sel = document.getElementById('dialogue_npcPick'); if (!sel) return;
+  const prev = sel.value;
+  const npcs = Object.values(state.npcs || {});
+  sel.innerHTML = '<option value="">— Pilih dari NPC (opsional) —</option>' +
+    npcs.map(n => `<option value="${n.id}">${escapeHtml(n.nama || 'NPC')}</option>`).join('');
+  if (npcs.some(n => n.id === prev)) sel.value = prev;
+}
+document.getElementById('dialogue_npcPick').addEventListener('change', (e) => {
+  const npc = (state.npcs || {})[e.target.value];
+  if (npc) document.getElementById('dialogue_name').value = npc.nama || '';
+});
+
+function populateHandoutTargetSelect() {
+  const sel = document.getElementById('handout_target'); if (!sel) return;
+  const prev = sel.value;
+  const players = state.playersList || Object.values(state.players || {});
+  sel.innerHTML = '<option value="">Semua Pemain</option>' +
+    players.map(p => `<option value="${p.id}">${escapeHtml(p.nama_karakter || p.name)}</option>`).join('');
+  if (players.some(p => p.id === prev)) sel.value = prev;
+}
+
+// ---- Scene Banner ----
+document.getElementById('sceneImageUpload').addEventListener('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  compressImageFile(file, 1200, 0.8).then(dataUrl => {
+    sceneImageData = dataUrl;
+    const img = document.getElementById('scenePreviewImg'); img.src = dataUrl; img.style.display = '';
+  });
+});
+document.getElementById('btnSceneImageClear').onclick = () => {
+  sceneImageData = null;
+  const img = document.getElementById('scenePreviewImg'); img.style.display = 'none'; img.src = '';
+  document.getElementById('sceneImageUpload').value = '';
+};
+document.getElementById('btnSceneShow').onclick = () => {
+  const title = document.getElementById('scene_title').value.trim();
+  if (!title) return alert('Isi judul adegan dulu.');
+  const desc = document.getElementById('scene_desc').value.trim();
+  socket.emit('dm:scene-set', { code: CODE, title, desc, imageUrl: sceneImageData !== null ? sceneImageData : undefined }, (res) => {
+    if (!res?.ok) alert(res?.error || 'Gagal menampilkan adegan.');
+  });
+};
+document.getElementById('btnSceneHide').onclick = () => socket.emit('dm:scene-clear', { code: CODE });
+socket.on('scene-updated', (scene) => { state.story = state.story || {}; state.story.scene = scene; renderStoryStatusBadges(); });
+
+// ---- Dialog NPC ----
+document.getElementById('dialoguePortraitUpload').addEventListener('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  compressImageFile(file, 400, 0.82).then(dataUrl => {
+    dialoguePortraitData = dataUrl;
+    const img = document.getElementById('dialoguePreviewImg'); img.src = dataUrl; img.style.display = '';
+  });
+});
+document.getElementById('btnDialoguePortraitClear').onclick = () => {
+  dialoguePortraitData = null;
+  const img = document.getElementById('dialoguePreviewImg'); img.style.display = 'none'; img.src = '';
+  document.getElementById('dialoguePortraitUpload').value = '';
+};
+document.getElementById('btnDialogueSay').onclick = () => {
+  const text = document.getElementById('dialogue_text').value.trim();
+  if (!text) return alert('Isi dialognya dulu.');
+  const npcName = document.getElementById('dialogue_name').value.trim() || 'NPC';
+  socket.emit('dm:dialogue-say', { code: CODE, npcName, npcPortrait: dialoguePortraitData !== null ? dialoguePortraitData : undefined, text }, (res) => {
+    if (!res?.ok) alert(res?.error || 'Gagal mengirim dialog.');
+    else document.getElementById('dialogue_text').value = '';
+  });
+};
+document.getElementById('btnDialogueHide').onclick = () => socket.emit('dm:dialogue-clear', { code: CODE });
+socket.on('dialogue-updated', (dialogue) => { state.story = state.story || {}; state.story.dialogue = dialogue; renderStoryStatusBadges(); });
+
+// ---- Quest Tracker ----
+function renderQuestList() {
+  const box = document.getElementById('questList'); if (!box) return;
+  const quests = Object.values((state.story && state.story.quests) || {}).sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
+  if (!quests.length) { box.innerHTML = '<p class="hint">Belum ada quest.</p>'; return; }
+  box.innerHTML = quests.map(q => `
+    <div class="quest-card" data-id="${q.id}">
+      <div class="quest-card-top">
+        <span class="quest-card-title">${escapeHtml(q.title)}</span>
+        <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
+      </div>
+      ${q.desc ? `<div class="quest-card-desc">${escapeHtml(q.desc)}</div>` : ''}
+      <div class="row">
+        <button type="button" class="small secondary quest-edit-btn" data-id="${q.id}" style="flex:1;">✏ Edit</button>
+        <button type="button" class="small danger quest-del-btn" data-id="${q.id}" style="flex:1;">🗑 Hapus</button>
+      </div>
+    </div>`).join('');
+  box.querySelectorAll('.quest-edit-btn').forEach(btn => { btn.onclick = () => loadQuestToForm((state.story.quests||{})[btn.dataset.id]); });
+  box.querySelectorAll('.quest-del-btn').forEach(btn => { btn.onclick = () => { if (confirm('Hapus quest ini?')) socket.emit('dm:quest-delete', { code: CODE, questId: btn.dataset.id }); }; });
+}
+function loadQuestToForm(q) {
+  document.getElementById('quest_id').value = q?.id || '';
+  document.getElementById('quest_title').value = q?.title || '';
+  document.getElementById('quest_desc').value = q?.desc || '';
+  document.getElementById('quest_status').value = q?.status || 'aktif';
+}
+document.getElementById('btnQuestResetForm').onclick = () => loadQuestToForm(null);
+document.getElementById('btnQuestSave').onclick = () => {
+  const title = document.getElementById('quest_title').value.trim();
+  if (!title) return alert('Isi judul quest.');
+  const quest = {
+    id: document.getElementById('quest_id').value || undefined,
+    title, desc: document.getElementById('quest_desc').value.trim(),
+    status: document.getElementById('quest_status').value
+  };
+  socket.emit('dm:quest-save', { code: CODE, quest }, (res) => {
+    if (!res?.ok) alert(res?.error || 'Gagal menyimpan quest.');
+    else loadQuestToForm(null);
+  });
+};
+socket.on('quests-updated', (quests) => { state.story = state.story || {}; state.story.quests = quests; renderQuestList(); renderStoryRecap(); });
+
+// ---- Handout ----
+document.getElementById('handoutImageUpload').addEventListener('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  compressImageFile(file, 1200, 0.8).then(dataUrl => {
+    handoutImageData = dataUrl;
+    const img = document.getElementById('handoutPreviewImg'); img.src = dataUrl; img.style.display = '';
+  });
+});
+document.getElementById('btnHandoutImageClear').onclick = () => {
+  handoutImageData = null;
+  const img = document.getElementById('handoutPreviewImg'); img.style.display = 'none'; img.src = '';
+  document.getElementById('handoutImageUpload').value = '';
+};
+document.getElementById('btnHandoutSend').onclick = () => {
+  const title = document.getElementById('handout_title').value.trim();
+  if (!title) return alert('Isi judul dokumen.');
+  const playerId = document.getElementById('handout_target').value || null;
+  const text = document.getElementById('handout_text').value.trim();
+  socket.emit('dm:handout-send', { code: CODE, playerId, title, imageUrl: handoutImageData, text }, (res) => {
+    if (!res?.ok) return alert(res?.error || 'Gagal mengirim dokumen.');
+    document.getElementById('handout_title').value = '';
+    document.getElementById('handout_text').value = '';
+    handoutImageData = null;
+    const img = document.getElementById('handoutPreviewImg'); img.style.display = 'none'; img.src = '';
+    document.getElementById('handoutImageUpload').value = '';
+  });
+};
+
+// ---- Recap (adegan/dialog/quest/handout + entri log yang di-⭐) ----
+function renderStoryRecap() {
+  const box = document.getElementById('storyRecapList'); if (!box) return;
+  const entries = state.log.filter(e => STORY_LOG_TYPES.includes(e.type) || e.starred).sort((a,b) => (a.ts||0)-(b.ts||0));
+  if (!entries.length) { box.innerHTML = '<p class="hint">Belum ada momen cerita.</p>'; return; }
+  box.innerHTML = entries.map(e => `
+    <div class="story-recap-entry">
+      <span class="from">${escapeHtml(e.from)}:</span> ${escapeHtml(e.text)}
+      ${e.ts ? `<span class="ts">${new Date(e.ts).toLocaleString()}</span>` : ''}
+    </div>`).join('');
+}
+socket.on('chat:starred', ({ id, starred }) => {
+  const entry = state.log.find(e => e.id === id);
+  if (entry) entry.starred = starred;
+  renderLog(); renderStoryRecap();
+});
+
 // =============================== RENDER ALL ============================
 function renderAll() {
   renderPlayers(); renderNpcs(); renderClasses(); renderBattle(); renderMusic(); renderShop(); renderLog();
   refreshBattleSourceOptions(); refreshTokenOwnerOptions();
   if (document.getElementById('tab-dm-map').style.display !== 'none') { renderMapTabs(); renderMap(); }
+  if (document.getElementById('tab-dm-story').style.display !== 'none') { renderStory(); }
+  else { renderStoryStatusBadges(); }
   const notesEl = document.getElementById('sessionNotes');
   if (notesEl && document.activeElement !== notesEl) notesEl.value = state.notes || '';
 }

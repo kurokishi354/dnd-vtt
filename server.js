@@ -127,6 +127,15 @@ function blankMusic() {
   };
 }
 
+// ---------- Story-telling: scene banner, dialog NPC, quest tracker ----------
+function blankStory() {
+  return {
+    scene: { title: '', desc: '', imageUrl: null, active: false, updatedAt: 0 },
+    dialogue: { npcName: '', npcPortrait: null, text: '', active: false, updatedAt: 0 },
+    quests: {}
+  };
+}
+
 // Deteksi link YouTube (watch, youtu.be, shorts, embed) dan ambil video ID-nya.
 function extractYoutubeId(url) {
   if (!url) return null;
@@ -146,6 +155,10 @@ function ensureSessionDefaults(session) {
   if (!session.music.playback) session.music.playback = blankMusic().playback;
   if (!session.shop) session.shop = { items: {} };
   if (!session.npcs) session.npcs = {};
+  if (!session.story) session.story = blankStory();
+  if (!session.story.scene) session.story.scene = blankStory().scene;
+  if (!session.story.dialogue) session.story.dialogue = blankStory().dialogue;
+  if (!session.story.quests) session.story.quests = {};
   // Migrasi peta lama (1 map + 1 dict token flat) -> banyak map, tiap map punya token & fog sendiri.
   // Biar bisa DM benar-benar bikin "Map 2", "Map 3" dst (mis. per lantai dungeon) tanpa numpuk token lintas map.
   if (!session.maps) {
@@ -310,6 +323,7 @@ function sessionStateForDM(session) {
     tokens: activeMap(session).tokens,
     battle: session.battle,
     music: session.music,
+    story: session.story,
     shop: session.shop || { items: {} },
     log: session.log.slice(-100),
     notes: session.notes || ''
@@ -329,6 +343,7 @@ function sessionStateForPlayer(session, playerId) {
     tokens: activeMap(session).tokens,
     battle: session.battle,
     music: session.music,
+    story: session.story,
     shop: session.shop || { items: {} },
     log: session.log.filter(e => !e.secret).slice(-100)
   };
@@ -607,6 +622,7 @@ io.on('connection', (socket) => {
       activeMapId: 'main',
       battle: { entries: {}, turn: { activeId: null, round: 1 } },
       music: blankMusic(),
+      story: blankStory(),
       log: [],
       notes: ''
     };
@@ -1634,6 +1650,151 @@ io.on('connection', (socket) => {
     session.music.playback.loop = !!loop;
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('music-state', session.music.playback);
+  });
+
+  // === Story: Scene Banner (adegan saat ini, tersiar ke semua player) ===
+  socket.on('dm:scene-set', ({ code, title, desc, imageUrl }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!title || !title.trim()) return cb && cb({ ok: false, error: 'Isi judul adegan.' });
+    session.story.scene = {
+      title: title.trim(), desc: (desc || '').trim(),
+      imageUrl: imageUrl !== undefined ? imageUrl : session.story.scene.imageUrl,
+      active: true, updatedAt: Date.now()
+    };
+    const logEntry = {
+      id: genId('log'), from: 'Cerita',
+      text: `📖 ${session.story.scene.title}${session.story.scene.desc ? ' — ' + session.story.scene.desc : ''}`,
+      type: 'narrative', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('scene-updated', session.story.scene);
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
+  });
+
+  socket.on('dm:scene-clear', ({ code }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return;
+    ensureSessionDefaults(session);
+    session.story.scene.active = false;
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('scene-updated', session.story.scene);
+  });
+
+  // === Story: Dialog NPC (visual-novel style, tersiar ke semua player) ===
+  socket.on('dm:dialogue-say', ({ code, npcName, npcPortrait, text }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!text || !text.trim()) return cb && cb({ ok: false, error: 'Isi dialognya dulu.' });
+    session.story.dialogue = {
+      npcName: (npcName || 'NPC').trim() || 'NPC',
+      npcPortrait: npcPortrait !== undefined ? npcPortrait : session.story.dialogue.npcPortrait,
+      text: text.trim(), active: true, updatedAt: Date.now()
+    };
+    const logEntry = {
+      id: genId('log'), from: session.story.dialogue.npcName,
+      text: `💬 ${session.story.dialogue.text}`,
+      type: 'dialogue', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('dialogue-updated', session.story.dialogue);
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
+  });
+
+  socket.on('dm:dialogue-clear', ({ code }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return;
+    ensureSessionDefaults(session);
+    session.story.dialogue.active = false;
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('dialogue-updated', session.story.dialogue);
+  });
+
+  // === Story: Quest / Objective Tracker ===
+  socket.on('dm:quest-save', ({ code, quest }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!quest || !quest.title || !quest.title.trim()) return cb && cb({ ok: false, error: 'Isi judul quest.' });
+    const isExisting = quest.id && session.story.quests[quest.id];
+    const id = isExisting ? quest.id : genId('q');
+    const prevStatus = isExisting ? session.story.quests[id].status : null;
+    const q = {
+      id, title: quest.title.trim(), desc: (quest.desc || '').trim(),
+      status: quest.status || 'aktif', updatedAt: Date.now()
+    };
+    session.story.quests[id] = q;
+    let logText = null;
+    if (!isExisting) logText = `📜 Quest baru: ${q.title}`;
+    else if (prevStatus !== q.status) {
+      if (q.status === 'selesai') logText = `✅ Quest selesai: ${q.title}`;
+      else if (q.status === 'gagal') logText = `❌ Quest gagal: ${q.title}`;
+      else logText = `📜 Quest diperbarui: ${q.title}`;
+    }
+    if (logText) {
+      const logEntry = { id: genId('log'), from: 'Cerita', text: logText, type: 'quest', ts: Date.now(), secret: false };
+      session.log.push(logEntry);
+      if (session.log.length > 300) session.log.shift();
+      io.to('room-' + code).emit('chat:new', logEntry);
+    }
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+    cb && cb({ ok: true, id });
+  });
+
+  socket.on('dm:quest-delete', ({ code, questId }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return;
+    ensureSessionDefaults(session);
+    if (!session.story.quests[questId]) return;
+    delete session.story.quests[questId];
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+  });
+
+  // === Story: Handout (kirim dokumen/gambar/catatan ke satu atau semua player) ===
+  socket.on('dm:handout-send', ({ code, playerId, title, imageUrl, text }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!title || !title.trim()) return cb && cb({ ok: false, error: 'Isi judul dokumen.' });
+    const handout = { id: genId('ho'), title: title.trim(), imageUrl: imageUrl || null, text: (text || '').trim(), ts: Date.now() };
+    const target = playerId && session.players[playerId] ? session.players[playerId] : null;
+    const targetLabel = target ? (target.sheet.nama_karakter || target.name) : 'Semua Pemain';
+    const logEntry = {
+      id: genId('log'), from: 'DM', text: `🎁 Dokumen untuk ${targetLabel}: ${handout.title}`,
+      type: 'handout', ts: Date.now(), secret: false, imageUrl: handout.imageUrl, handoutText: handout.text
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('chat:new', logEntry);
+    if (target) { if (target.socketId) io.to(target.socketId).emit('story:handout', handout); }
+    else { io.to('room-' + code).emit('story:handout', handout); }
+    cb && cb({ ok: true });
+  });
+
+  // === Story: tandai/lepas entri log jadi "penting" (dipakai panel Recap) ===
+  socket.on('dm:log-star', ({ code, id, starred }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return;
+    const entry = session.log.find(e => e.id === id);
+    if (!entry) return;
+    entry.starred = !!starred;
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('chat:starred', { id, starred: entry.starred });
   });
 
   // === Chat & dice log bersama ===

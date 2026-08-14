@@ -150,6 +150,18 @@ Panel **👹 NPC** sekarang punya bagian skill terstruktur yang formatnya sama s
 ## 4n3. NPC sebagai Daftar Enemy Siap Pakai
 NPC yang sudah dibuat berfungsi sebagai daftar enemy/ally yang bisa dipakai berkali-kali. Tiap kartu NPC di panel **👹 NPC** sekarang punya tombol **⚔** — klik untuk langsung menambahkan NPC itu ke Battle & Giliran (sebagai Enemy) tanpa perlu mengisi ulang form "Tambah ke Battle" satu-satu. Roll initiative-nya dikosongkan dulu dan tinggal diisi langsung di baris battle-nya. Kombinasikan dengan Export/Import NPC (poin 4k) untuk punya "bestiary" musuh yang bisa dipakai ulang lintas sesi.
 
+## 4o. Story-telling: Scene Banner, Dialog NPC, Quest Tracker, Handout, Recap
+Tab baru **📖 Cerita** (DM Board) berisi 5 fitur yang saling melengkapi untuk membangun narasi sesi:
+
+- **🎬 Scene Banner**: DM isi judul + deskripsi + (opsional) gambar suasana, lalu klik "📢 Tampilkan ke Semua" — muncul sebagai banner besar di atas layar semua player (mirip transisi adegan di game), sampai DM klik "✖ Sembunyikan Banner" atau player menutupnya sendiri secara lokal. Setiap kali ditampilkan otomatis tercatat di log sebagai entri bertipe "narrative".
+- **💬 Dialog NPC**: DM pilih NPC dari daftar (opsional, auto-isi nama) atau ketik nama bebas, upload potret (opsional), ketik dialog, lalu klik "🗣 Katakan" — muncul sebagai kotak dialog ala visual novel di bagian bawah layar semua player. Tiap dialog juga tercatat di log.
+- **📜 Quest / Objective Tracker**: DM bikin/edit quest (judul, deskripsi, status Aktif/Selesai/Gagal). Player lihat versi read-only di tab **📖 Cerita** miliknya. Perubahan status otomatis diumumkan di log ("✅ Quest selesai: ...", dst).
+- **🎁 Handout (kirim dokumen)**: DM kirim gambar/surat/catatan ke satu player tertentu atau semua sekaligus — muncul sebagai popup di layar penerima, plus notifikasi kecil di pojok layar.
+- **⭐ Recap / Riwayat Cerita**: panel yang otomatis merangkum semua momen cerita (scene, dialog, quest, handout) secara kronologis — cocok dipakai DM untuk baca ulang "sebelumnya di sesi ini..." sebelum mulai sesi berikutnya. DM juga bisa menandai entri log biasa di tab Utama dengan tombol ⭐ supaya ikut masuk ke Recap ini.
+
+Player bisa lihat Quest & Recap lewat tab **📖 Cerita** di sheet-nya (read-only) — Scene Banner dan Dialog NPC muncul otomatis sebagai overlay dari tab manapun yang sedang dibuka.
+
+
 ## 5. Struktur folder
 ```
 dnd-vtt/

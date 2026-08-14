@@ -127,6 +127,9 @@ const battleState = {
 };
 let diceLog = [];
 let onlinePlayersList = [];
+let storyState = { scene: { title:'', desc:'', imageUrl:null, active:false }, dialogue: { npcName:'', npcPortrait:null, text:'', active:false }, quests: {} };
+let sceneBannerDismissedAt = 0;
+let dialogueBoxDismissedAt = 0;
 
 // Map state (no zoom — peta selalu fit ke ukuran gambar aslinya)
 
@@ -177,18 +180,20 @@ socket.on('players-list-update', (list) => {
 
 // =============================== TABS ===================================
 function showPageTab(name) {
-  ['sheet','battle','map','companion','shop'].forEach(t => {
+  ['sheet','battle','map','story','companion','shop'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === name ? '' : 'none';
     document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
   });
   if (name === 'battle') renderBattleStatus();
   if (name === 'map') renderPMap();
+  if (name === 'story') renderStoryPlayer();
   if (name === 'companion') renderCompanions();
   if (name === 'shop') renderShopList();
 }
 document.getElementById('tabBtnSheet').addEventListener('click', () => showPageTab('sheet'));
 document.getElementById('tabBtnBattle').addEventListener('click', () => showPageTab('battle'));
 document.getElementById('tabBtnMap').addEventListener('click', () => showPageTab('map'));
+document.getElementById('tabBtnStory').addEventListener('click', () => showPageTab('story'));
 document.getElementById('tabBtnCompanion').addEventListener('click', () => showPageTab('companion'));
 document.getElementById('tabBtnShop').addEventListener('click', () => showPageTab('shop'));
 
@@ -1071,7 +1076,9 @@ socket.on('connect', () => {
     diceLog = res.state.log || [];
     onlinePlayersList = res.state.playersList || [];
     shopItems = (res.state.shop && res.state.shop.items) || {};
+    storyState = res.state.story || storyState;
     renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderOnlinePlayers(); renderShopList();
+    renderSceneBanner(); renderDialogueBox(); renderStoryPlayer();
   });
 });
 
@@ -1629,7 +1636,10 @@ document.getElementById('btnPActionRoll').addEventListener('click', () => {
 });
 
 // =============================== DICE LOG / CHAT ========================
-socket.on('chat:new', (entry) => { diceLog.push(entry); renderDiceLog(); });
+socket.on('chat:new', (entry) => {
+  diceLog.push(entry); renderDiceLog();
+  if (STORY_LOG_TYPES_P.includes(entry.type) && document.getElementById('tab-story').style.display !== 'none') renderStoryRecapPlayer();
+});
 socket.on('chat:cleared', () => { diceLog = []; renderDiceLog(); });
 socket.on('chat:revealed', (entry) => {
   const idx = diceLog.findIndex(e => e.id === entry.id);
@@ -1658,6 +1668,105 @@ function renderDiceLog() {
   }).join('') || '<p class="hint">Belum ada log.</p>';
   box.scrollTop = box.scrollHeight;
 }
+
+// =============================== STORY (Scene Banner / Dialog / Quest / Handout) ===
+function renderSceneBanner() {
+  const scene = (storyState && storyState.scene) || {};
+  const el = document.getElementById('sceneBanner'); if (!el) return;
+  const isNew = (scene.updatedAt || 0) > sceneBannerDismissedAt;
+  if (scene.active && isNew) {
+    el.classList.add('show');
+    document.getElementById('sceneBannerTitle').textContent = scene.title || '';
+    document.getElementById('sceneBannerDesc').textContent = scene.desc || '';
+    const img = document.getElementById('sceneBannerImg');
+    if (scene.imageUrl) { img.src = scene.imageUrl; img.style.display = ''; } else { img.style.display = 'none'; img.src = ''; }
+  } else {
+    el.classList.remove('show');
+  }
+}
+document.getElementById('btnSceneBannerClose').addEventListener('click', () => {
+  sceneBannerDismissedAt = Date.now();
+  document.getElementById('sceneBanner').classList.remove('show');
+});
+socket.on('scene-updated', (scene) => {
+  storyState.scene = scene;
+  if (scene.active) sceneBannerDismissedAt = 0; // adegan baru dari DM selalu tampil lagi
+  renderSceneBanner();
+  if (document.getElementById('tab-story').style.display !== 'none') renderStoryPlayer();
+});
+
+function renderDialogueBox() {
+  const dlg = (storyState && storyState.dialogue) || {};
+  const el = document.getElementById('dialogueBox'); if (!el) return;
+  const isNew = (dlg.updatedAt || 0) > dialogueBoxDismissedAt;
+  if (dlg.active && isNew) {
+    el.classList.add('show');
+    document.getElementById('dialogueNameEl').textContent = dlg.npcName || 'NPC';
+    document.getElementById('dialogueTextEl').textContent = dlg.text || '';
+    const img = document.getElementById('dialoguePortraitImg');
+    if (dlg.npcPortrait) { img.src = dlg.npcPortrait; img.style.display = ''; } else { img.style.display = 'none'; img.src = ''; }
+  } else {
+    el.classList.remove('show');
+  }
+}
+document.getElementById('btnDialogueClose').addEventListener('click', () => {
+  dialogueBoxDismissedAt = Date.now();
+  document.getElementById('dialogueBox').classList.remove('show');
+});
+socket.on('dialogue-updated', (dialogue) => {
+  storyState.dialogue = dialogue;
+  if (dialogue.active) dialogueBoxDismissedAt = 0; // dialog baru dari DM selalu tampil lagi
+  renderDialogueBox();
+  if (document.getElementById('tab-story').style.display !== 'none') renderStoryPlayer();
+});
+
+function renderPlayerQuestList() {
+  const box = document.getElementById('pQuestList'); if (!box) return;
+  const quests = Object.values((storyState && storyState.quests) || {}).sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
+  if (!quests.length) { box.innerHTML = '<p class="hint">Belum ada quest.</p>'; return; }
+  box.innerHTML = quests.map(q => `
+    <div class="quest-card">
+      <div class="quest-card-top">
+        <span class="quest-card-title">${pEscapeHtml(q.title)}</span>
+        <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
+      </div>
+      ${q.desc ? `<div class="quest-card-desc">${pEscapeHtml(q.desc)}</div>` : ''}
+    </div>`).join('');
+}
+socket.on('quests-updated', (quests) => {
+  storyState.quests = quests;
+  renderPlayerQuestList();
+  if (document.getElementById('tab-story').style.display !== 'none') renderStoryRecapPlayer();
+});
+
+const STORY_LOG_TYPES_P = ['narrative','scene','dialogue','quest','handout'];
+function renderStoryRecapPlayer() {
+  const box = document.getElementById('pStoryRecapList'); if (!box) return;
+  const entries = diceLog.filter(e => STORY_LOG_TYPES_P.includes(e.type)).sort((a,b) => (a.ts||0)-(b.ts||0));
+  if (!entries.length) { box.innerHTML = '<p class="hint">Belum ada momen cerita.</p>'; return; }
+  box.innerHTML = entries.map(e => `
+    <div class="story-recap-entry">
+      <span class="from">${pEscapeHtml(e.from)}:</span> ${pEscapeHtml(e.text)}
+      ${e.ts ? `<span class="ts">${new Date(e.ts).toLocaleString()}</span>` : ''}
+    </div>`).join('');
+}
+function renderStoryPlayer() { renderPlayerQuestList(); renderStoryRecapPlayer(); }
+
+// ---- Handout modal ----
+function openHandoutModal(handout) {
+  document.getElementById('handoutModalTitle').textContent = '🎁 ' + (handout.title || 'Dokumen');
+  const img = document.getElementById('handoutModalImg');
+  if (handout.imageUrl) { img.src = handout.imageUrl; img.style.display = ''; } else { img.style.display = 'none'; img.src = ''; }
+  document.getElementById('handoutModalText').textContent = handout.text || '';
+  document.getElementById('handoutModal').classList.add('show');
+}
+document.getElementById('btnHandoutModalClose').addEventListener('click', () => {
+  document.getElementById('handoutModal').classList.remove('show');
+});
+socket.on('story:handout', (handout) => {
+  openHandoutModal(handout);
+  showToast('🎁 Kamu menerima dokumen: ' + (handout.title || ''));
+});
 
 const P_DICE_TYPES = [4,6,8,10,12,20,100];
 document.getElementById('pDiceQuickRow').innerHTML = P_DICE_TYPES.map(d => `<button type="button" class="dice-btn" data-sides="${d}">d${d}</button>`).join('');
