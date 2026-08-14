@@ -1236,8 +1236,8 @@ function renderBattleInventory() {
   items.forEach((it) => {
     const label = INV_ITEM_TYPE_LABEL[it.type] || '📦';
     html += `<div class="skill-line" style="align-items:center;">
-      <span>${pEscapeHtml(it.item)} <span class="hint">${label}${it.formula ? ' · ' + pEscapeHtml(it.formula) : ''}${it.desc ? ' · ' + pEscapeHtml(it.desc) : ''}</span> <span class="hint">(qty: ${it.qty||1})</span></span>
-      <button type="button" class="small inv-use-btn" data-inv-i="${invState.indexOf(it)}">⚡ Pakai</button>
+      <span>${pEscapeHtml(it.item)} <span class="hint">${label}${it.formula ? ' · ' + pEscapeHtml(it.formula) : ''}${it.aoe ? ' · 💥AoE' : ''}${it.desc ? ' · ' + pEscapeHtml(it.desc) : ''}</span> <span class="hint">(qty: ${it.qty||1})</span></span>
+      <button type="button" class="small inv-use-btn" data-inv-i="${invState.indexOf(it)}" title="${it.aoe?'Otomatis kena ke semua musuh/sekutu':'Terapkan ke target terpilih'}">⚡ Pakai</button>
     </div>`;
   });
   box.innerHTML = html;
@@ -1263,11 +1263,15 @@ function useInventoryInBattle(idx) {
     renderInventory(); renderBattleInventory(); scheduleSave();
   };
 
+  // Item yang ditandai AoE di toko/DM otomatis nembak ke semua musuh, walau target yang lagi
+  // dipilih di panel cuma 1 orang — biar player gak perlu ganti-ganti dropdown target manual.
+  const effectiveTargetId = it.aoe ? '__aoe_enemy__' : targetId;
+
   if (it.type === 'cure') {
     // Cure: hapus semua status condition di target (pakai kondisi 'Normal' yang artinya bersih)
-    socket.emit('battle:apply-status', { code: CODE, targetId, condition: 'Normal', actorName: from }, (res) => {
+    socket.emit('battle:apply-status', { code: CODE, targetId: it.aoe ? '__aoe_ally__' : targetId, condition: 'Normal', actorName: from }, (res) => {
       if (res && res.ok) {
-        if (status) status.textContent = `✓ Item "${it.item}" dipakai: status condition target dibersihkan.`;
+        if (status) status.textContent = res.aoe ? `✓ Item "${it.item}" dipakai: status condition ${res.affected.join(', ')} dibersihkan.` : `✓ Item "${it.item}" dipakai: status condition target dibersihkan.`;
         consumeItem();
       } else if (status) status.textContent = res && res.error ? res.error : 'Gagal memakai item.';
     });
@@ -1277,10 +1281,13 @@ function useInventoryInBattle(idx) {
   if (it.type === 'revive') {
     // Revive: bersihkan kondisi fatal + heal sesuai formula (default 1d8 kalau kosong)
     const formula = it.formula || '1d8';
-    socket.emit('battle:apply-status', { code: CODE, targetId, condition: 'Normal', actorName: from }, () => {
-      socket.emit('battle:roll-action', { code: CODE, targetId, actionType: 'heal', formula, actorName: from, note: `Item Revive: ${it.item}` }, (res) => {
+    const reviveTarget = it.aoe ? '__aoe_ally__' : targetId;
+    socket.emit('battle:apply-status', { code: CODE, targetId: reviveTarget, condition: 'Normal', actorName: from }, () => {
+      socket.emit('battle:roll-action', { code: CODE, targetId: reviveTarget, actionType: 'heal', formula, actorName: from, note: `Item Revive: ${it.item}` }, (res) => {
         if (res && res.ok) {
-          if (status) status.textContent = `⚕ Item "${it.item}" dipakai: kondisi fatal dibersihkan & heal ${formula} = ${res.roll.total}.`;
+          if (status) status.textContent = res.aoe
+            ? `⚕ Item "${it.item}" dipakai ke semua sekutu: kondisi fatal dibersihkan & heal ${formula}.`
+            : `⚕ Item "${it.item}" dipakai: kondisi fatal dibersihkan & heal ${formula} = ${res.roll.total}.`;
           consumeItem();
         } else if (status) status.textContent = res && res.error ? res.error : 'Gagal memakai item.';
       });
@@ -1290,9 +1297,12 @@ function useInventoryInBattle(idx) {
 
   const actionType = INV_TYPE_TO_ACTION[it.type] || 'damage';
   const formula = it.formula || '1';
-  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName: from, note: `Item: ${it.item}` }, (res) => {
+  socket.emit('battle:roll-action', { code: CODE, targetId: effectiveTargetId, actionType, formula, actorName: from, note: `Item: ${it.item}` }, (res) => {
     if (res && res.ok) {
-      if (status) status.textContent = `✓ Item "${it.item}" dipakai: ${formula} = ${res.roll.total}.`;
+      if (res.aoe) {
+        const summary = (res.results||[]).map(r => `${r.entryName}: ${r.roll.total}`).join(', ');
+        if (status) status.textContent = `💥 Item "${it.item}" dipakai (AoE): ${summary}.`;
+      } else if (status) status.textContent = `✓ Item "${it.item}" dipakai: ${formula} = ${res.roll.total}.`;
       consumeItem();
     } else {
       if (status) status.textContent = res && res.error ? res.error : 'Gagal memakai item.';
@@ -1404,8 +1414,11 @@ function useSkillInBattle(ds) {
       elementType: element, elemBonus: elemPct
     }, (res) => {
       if (res && res.ok) {
-        if (status) status.textContent = `⚡ "${nama}" diterapkan: ${ds.formula} = ${res.roll.total}.`;
-        // Apply status effect condition on target (reflect on actor too if self-buff)
+        if (res.aoe) {
+          const summary = (res.results||[]).map(r => `${r.entryName}: ${r.roll.total}`).join(', ');
+          if (status) status.textContent = `💥 "${nama}" diterapkan (AoE): ${summary}.`;
+        } else if (status) status.textContent = `⚡ "${nama}" diterapkan: ${ds.formula} = ${res.roll.total}.`;
+        // Apply status effect condition on target (reflect on actor too if self-buff; ikut AoE kalau targetnya AoE)
         if (statusEffect && statusEffect !== '') {
           socket.emit('battle:apply-status', { code: CODE, targetId, condition: statusEffect, actorName: from });
         }
@@ -1553,8 +1566,16 @@ function renderPBattle() {
   const targetSel = document.getElementById('pActionTarget');
   if (targetSel) {
     const prevVal = targetSel.value;
-    targetSel.innerHTML = list.map(e => `<option value="${e.id}">${escapeAttrVal(e.name)} (${e.type})</option>`).join('') || '<option value="">(belum ada peserta)</option>';
-    if (list.some(e => e.id === prevVal)) targetSel.value = prevVal;
+    const opts = list.map(e => `<option value="${e.id}">${escapeAttrVal(e.name)} (${e.type})</option>`);
+    // Opsi AoE: cuma dimunculin kalau ada minimal 1 peserta yang cocok di grupnya, biar gak nembak kosong.
+    const hasEnemy = list.some(e => e.type === 'enemy');
+    const hasAlly = list.some(e => e.type === 'pc' || e.type === 'ally');
+    const aoeOpts = [];
+    if (hasEnemy) aoeOpts.push(`<option value="__aoe_enemy__">💥 Semua Musuh (AoE)</option>`);
+    if (hasAlly) aoeOpts.push(`<option value="__aoe_ally__">💥 Semua Sekutu (AoE)</option>`);
+    if (list.length > 1) aoeOpts.push(`<option value="__aoe_all__">💥 Semua Peserta (AoE)</option>`);
+    targetSel.innerHTML = (aoeOpts.length ? aoeOpts.join('') : '') + (opts.join('') || '<option value="">(belum ada peserta)</option>');
+    if (list.some(e => e.id === prevVal) || aoeOpts.some(o => o.includes(`value="${prevVal}"`))) targetSel.value = prevVal;
   }
 }
 
@@ -1575,7 +1596,12 @@ document.getElementById('btnPActionRoll').addEventListener('click', () => {
   socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName, elementType, elemBonus: elemPct }, (res) => {
     const status = document.getElementById('pActionStatus');
     if (res && res.ok) {
-      status.textContent = `✓ ${formula} = ${res.roll.total} diterapkan.${atkNote}${elemPct?' ('+elementType+' '+fmtMod(elemPct)+'%)':''}`;
+      if (res.aoe) {
+        const summary = (res.results||[]).map(r => `${r.entryName}: ${r.roll.total}`).join(', ');
+        status.textContent = `💥 AoE ${formula} diterapkan ke ${res.results.length} target — ${summary}.${atkNote}`;
+      } else {
+        status.textContent = `✓ ${formula} = ${res.roll.total} diterapkan.${atkNote}${elemPct?' ('+elementType+' '+fmtMod(elemPct)+'%)':''}`;
+      }
       document.getElementById('pActionFormula').value = '';
     } else { status.textContent = res && res.error ? res.error : 'Gagal menerapkan aksi.'; }
   });

@@ -332,6 +332,30 @@ const BATTLE_ACTION_LABEL = {
   mana_regen: 'Regen Mana', sp_regen: 'Regen SP', ac_buff: 'Buff AC', ac_debuff: 'Debuff AC'
 };
 
+// ---------- AoE targeting: targetId khusus "__aoe_enemy__" / "__aoe_ally__" / "__aoe_all__" ----------
+// dikirim dari client kalau player/DM milih opsi "Semua Musuh/Sekutu" di dropdown target,
+// jadi 1 skill/item/aksi otomatis kena ke banyak entry battle sekaligus (gak perlu diulang manual).
+const AOE_GROUP_LABEL = { enemy: 'semua musuh', ally: 'semua sekutu', all: 'semua peserta' };
+function aoeGroupFromTargetId(targetId) {
+  if (typeof targetId !== 'string' || !targetId.startsWith('__aoe_')) return null;
+  const group = targetId.slice('__aoe_'.length, targetId.length - 2); // buang prefix & '__' penutup
+  return AOE_GROUP_LABEL[group] ? group : null;
+}
+function entryMatchesAoeGroup(entry, group) {
+  if (group === 'enemy') return entry.type === 'enemy';
+  if (group === 'ally') return entry.type === 'pc' || entry.type === 'ally';
+  if (group === 'all') return true;
+  return false;
+}
+// Balikin daftar id entry battle yang jadi sasaran (single id kalau bukan AoE, banyak id kalau AoE).
+function resolveTargetIds(session, targetId) {
+  const group = aoeGroupFromTargetId(targetId);
+  if (group) {
+    return Object.keys(session.battle.entries || {}).filter(id => entryMatchesAoeGroup(session.battle.entries[id], group));
+  }
+  return (session.battle.entries || {})[targetId] ? [targetId] : [];
+}
+
 // Jumlahkan modifier stat tertentu dari daftar buff/debuff sebuah sheet (mis. total DEF aktif).
 function sumBuffStat(buffs, stat) {
   if (!Array.isArray(buffs)) return 0;
@@ -879,12 +903,20 @@ io.on('connection', (socket) => {
     let existing = player.sheet.inventory.find(it => it.item === item.nama && it.fromShop && !it.checked);
     if (existing) {
       existing.qty = (parseInt(existing.qty, 10) || 1) + buyQty;
+      // Sinkronkan efek terbaru dari katalog toko, siapa tahu DM update efeknya setelah item ini pernah dibeli
+      existing.type = item.efekTipe || 'misc';
+      existing.formula = item.efekFormula || '';
+      existing.aoe = !!item.aoe;
     } else {
       if (player.sheet.inventory.length >= maxSlots) {
         return cb && cb({ ok: false, error: `Inventory penuh (maks ${maxSlots} slot). Kosongkan slot dulu atau minta DM tambah slot.` });
       }
+      // Efek (tipe + formula dadu + AoE) ikut kebawa otomatis dari katalog toko ke inventory,
+      // jadi begitu dibeli item langsung bisa "⚡ Pakai" di battle tanpa diketik ulang.
       player.sheet.inventory.push({
-        checked: false, item: item.nama, desc: item.deskripsi || '', type: 'misc', qty: buyQty, fromShop: true
+        checked: false, item: item.nama, desc: item.deskripsi || '',
+        type: item.efekTipe || 'misc', formula: item.efekFormula || '', aoe: !!item.aoe,
+        qty: buyQty, fromShop: true
       });
     }
 
@@ -1180,24 +1212,19 @@ io.on('connection', (socket) => {
   // === Aksi Roll Battle (dmg/heal/buff/debuff/ultimate/regen mana/regen sp/ac) ===
   // Dipakai player maupun DM. Mendukung elemental modifier dari class_trait actor
   // dan elemental resistance target. Juga heal overtime (heal_dot) dari buff entry.
-  socket.on('battle:roll-action', ({ code, targetId, actionType, formula, actorName, note, elementType, elemBonus }, cb) => {
-    const session = sessions[code];
-    if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
-    const entry = session.battle.entries[targetId];
-    if (!entry) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
+  // Terapkan 1 aksi (damage/heal/buff/dll) ke 1 entry battle. Dipakai baik utk single target
+  // maupun dipanggil berulang per-entry pas AoE. Gak ngirim socket event apa pun di sini —
+  // biar caller yang atur emit-nya sekali aja setelah semua target selesai diproses.
+  function applyActionToEntry(session, code, entry, { actionType, formula, actor, note, elementType, elemBonus }) {
     const map = BATTLE_ACTION_MAP[actionType];
     const roll = rollFormulaServer(formula);
-    const actor = actorName || (socket.data.role === 'dm' ? 'DM' : 'Player');
     const label = BATTLE_ACTION_LABEL[actionType] || actionType;
     const noteSuffix = note ? ' — ' + note : '';
 
-    // Elemental modifier: actor bonus - target resistance (keduanya dari class_trait/elements)
     let elemModifier = 0;
     let elemNote = '';
     if (elementType && (actionType === 'damage' || actionType === 'ultimate')) {
-      // Actor elemental bonus (dikirim dari client, sudah dihitung dari class_trait)
       const actorElemPct = parseFloat(elemBonus) || 0;
-      // Target elemental resistance: kalau target adalah player, ambil dari sheet.class_trait
       let targetElemPct = 0;
       if (entry.refType === 'player' && session.players[entry.refId]) {
         const ct = session.players[entry.refId].sheet.class_trait || {};
@@ -1205,9 +1232,6 @@ io.on('connection', (socket) => {
       } else if (entry.elements) {
         targetElemPct = parseFloat(entry.elements[elementType]) || 0;
       }
-      // Positif = resistansi (kurangi dmg), negatif = kelemahan (tambah dmg)
-      // Actor bonus: positif = tambahin dmg keluar
-      // Target resist: positif = kurangi dmg masuk, negatif = perbanyak dmg masuk
       const netPct = actorElemPct - targetElemPct;
       elemModifier = Math.round(roll.total * netPct / 100);
       if (netPct !== 0) {
@@ -1215,7 +1239,6 @@ io.on('connection', (socket) => {
       }
     }
 
-    // DEF reduction dari buff/debuff player target
     let defReduction = 0;
     if ((actionType === 'damage' || actionType === 'ultimate') && entry.refType === 'player') {
       const targetPlayer = session.players[entry.refId];
@@ -1225,11 +1248,10 @@ io.on('connection', (socket) => {
     const effectiveTotal = Math.max(0, roll.total + elemModifier - defReduction);
     const defNote = defReduction ? ` (DEF -${defReduction})` : '';
 
-    let resultText;
-    let logType = 'roll';
+    let resultText, logType = 'roll', next = null;
     if (map) {
       const cur = parseFloat(entry[map.field]) || 0;
-      let next = cur + map.sign * effectiveTotal;
+      next = cur + map.sign * effectiveTotal;
       if (map.maxField) {
         const max = parseFloat(entry[map.maxField]);
         if (!isNaN(max)) next = Math.min(next, max);
@@ -1237,7 +1259,6 @@ io.on('connection', (socket) => {
       next = Math.max(0, next);
       entry[map.field] = next;
 
-      // Sync ke sheet player jika target adalah PC
       if (entry.refType === 'player' && session.players[entry.refId]) {
         const tp = session.players[entry.refId];
         const fieldMap = {
@@ -1257,41 +1278,89 @@ io.on('connection', (socket) => {
     } else {
       resultText = `${actor} pakai ${label} ke ${entry.name}: ${formula || '-'} = ${roll.total} (${roll.detail})${noteSuffix}`;
     }
+
+    return { entryId: entry.id, entryName: entry.name, resultText, logType, next, roll: { ...roll, total: effectiveTotal } };
+  }
+
+  socket.on('battle:roll-action', ({ code, targetId, actionType, formula, actorName, note, elementType, elemBonus }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
+    const targetIds = resolveTargetIds(session, targetId);
+    if (!targetIds.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan (AoE: belum ada peserta yang cocok).' });
+    const aoeGroup = aoeGroupFromTargetId(targetId);
+    const actor = actorName || (socket.data.role === 'dm' ? 'DM' : 'Player');
+
+    const results = targetIds
+      .map(tid => session.battle.entries[tid])
+      .filter(Boolean)
+      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, note, elementType, elemBonus }));
+    if (!results.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
+
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
-    const logEntry = { id: genId('log'), from: actor, text: resultText, type: logType, ts: Date.now(), secret: false };
+
+    let logEntry;
+    if (aoeGroup) {
+      const label = BATTLE_ACTION_LABEL[actionType] || actionType;
+      const noteSuffix = note ? ' — ' + note : '';
+      const summary = results.map(r => `${r.entryName}: ${r.roll.total}${r.next != null ? ` → ${r.next}` : ''}`).join(' | ');
+      const logType = results.some(r => r.logType === 'damage') ? 'damage' : (results.some(r => r.logType === 'heal') ? 'heal' : 'roll');
+      logEntry = {
+        id: genId('log'), from: actor,
+        text: `💥 ${actor} pakai ${label} (AoE ke ${AOE_GROUP_LABEL[aoeGroup]}): ${formula || '-'}${noteSuffix} → ${summary}`,
+        type: logType, ts: Date.now(), secret: false
+      };
+    } else {
+      logEntry = { id: genId('log'), from: actor, text: results[0].resultText, type: results[0].logType, ts: Date.now(), secret: false };
+    }
     session.log.push(logEntry);
     if (session.log.length > 300) session.log.shift();
     io.to('room-' + code).emit('chat:new', logEntry);
-    cb && cb({ ok: true, entry, roll: { ...roll, total: effectiveTotal } });
+
+    cb && cb({
+      ok: true,
+      aoe: !!aoeGroup,
+      results: results.map(r => ({ entryId: r.entryId, entryName: r.entryName, roll: r.roll, next: r.next })),
+      entry: session.battle.entries[targetIds[0]],
+      roll: results[0].roll
+    });
   });
 
-  // === Apply status condition ke target battle ===
+  // === Apply status condition ke target battle (support AoE ke banyak entry sekaligus) ===
   socket.on('battle:apply-status', ({ code, targetId, condition, actorName }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
-    const entry = session.battle.entries[targetId];
-    if (!entry) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
-
-    if (!Array.isArray(entry.conditions)) entry.conditions = [];
-
-    if (condition === 'Normal') {
-      entry.conditions = [];
-    } else if (!entry.conditions.includes(condition)) {
-      entry.conditions.push(condition);
-    }
-
-    // Kalau target adalah player, emit event ke player supaya auto-ceklis condition di sheet
-    if (entry.refType === 'player' && session.players[entry.refId]) {
-      const tp = session.players[entry.refId];
-      if (tp.socketId) io.to(tp.socketId).emit('battle-apply-status', { targetId, condition });
-    }
-
+    const targetIds = resolveTargetIds(session, targetId);
+    if (!targetIds.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan (AoE: belum ada peserta yang cocok).' });
+    const aoeGroup = aoeGroupFromTargetId(targetId);
     const actor = actorName || (socket.data.role === 'dm' ? 'DM' : 'Player');
     const condText = condition === 'Normal' ? 'kondisi dihapus (Normal)' : `terkena ${condition}`;
+
+    const affectedNames = [];
+    targetIds.forEach(tid => {
+      const entry = session.battle.entries[tid];
+      if (!entry) return;
+      if (!Array.isArray(entry.conditions)) entry.conditions = [];
+
+      if (condition === 'Normal') {
+        entry.conditions = [];
+      } else if (!entry.conditions.includes(condition)) {
+        entry.conditions.push(condition);
+      }
+      affectedNames.push(entry.name);
+
+      if (entry.refType === 'player' && session.players[entry.refId]) {
+        const tp = session.players[entry.refId];
+        if (tp.socketId) io.to(tp.socketId).emit('battle-apply-status', { targetId: tid, condition });
+      }
+    });
+    if (!affectedNames.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
+
     const logEntry = {
       id: genId('log'), from: 'Sistem',
-      text: `⚡ ${actor} menerapkan status: ${entry.name} ${condText}.`,
+      text: aoeGroup
+        ? `⚡ ${actor} menerapkan status ke ${AOE_GROUP_LABEL[aoeGroup]} (${affectedNames.join(', ')}): ${condText}.`
+        : `⚡ ${actor} menerapkan status: ${affectedNames[0]} ${condText}.`,
       type: 'system', ts: Date.now(), secret: false
     };
     session.log.push(logEntry);
@@ -1300,7 +1369,7 @@ io.on('connection', (socket) => {
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
     io.to('room-' + code).emit('chat:new', logEntry);
-    cb && cb({ ok: true });
+    cb && cb({ ok: true, aoe: !!aoeGroup, affected: affectedNames });
   });
 
   // === DM: kelola katalog Shop Item (CRUD + import Excel/JSON bulk) ===
@@ -1312,7 +1381,10 @@ io.on('connection', (socket) => {
     const id = item.id || genId('shop');
     session.shop.items[id] = {
       id, nama: item.nama || '', harga: item.harga ?? 0, tipe: item.tipe || '',
-      stok: item.stok ?? '', deskripsi: item.deskripsi || ''
+      stok: item.stok ?? '', deskripsi: item.deskripsi || '',
+      // Efek item (heal/damage/buff/dll + formula dadu) — dibawa otomatis ke inventory pas player beli,
+      // jadi gak perlu diketik ulang manual tiap mau dipakai. aoe: true = otomatis kena ke semua musuh/sekutu.
+      efekTipe: item.efekTipe || 'misc', efekFormula: item.efekFormula || '', aoe: !!item.aoe
     };
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('shop-updated', session.shop.items);
@@ -1339,7 +1411,9 @@ io.on('connection', (socket) => {
       const id = genId('shop');
       session.shop.items[id] = {
         id, nama, harga: it.harga ?? 0, tipe: it.tipe || '',
-        stok: it.stok ?? '', deskripsi: it.deskripsi || ''
+        stok: it.stok ?? '', deskripsi: it.deskripsi || '',
+        efekTipe: it.efekTipe || it.efek_tipe || 'misc', efekFormula: it.efekFormula || it.efek_formula || '',
+        aoe: !!(it.aoe === true || it.aoe === 'true' || it.aoe === 1 || it.aoe === '1')
       };
       count++;
     });

@@ -923,10 +923,18 @@ function refreshDmActionTargetOptions() {
   const sel = document.getElementById('dmActionTarget'); if (!sel) return;
   const prevVal = sel.value;
   const list = sortedBattle();
-  sel.innerHTML = list.map(e=>`<option value="${e.id}">${escapeHtml(e.name)} (${e.type})</option>`).join('')||'<option value="">(belum ada)</option>';
-  if (list.some(e=>e.id===prevVal)) sel.value = prevVal;
+  // Opsi AoE buat DM juga — mis. serangan boss ke semua PC sekaligus, tanpa klik satu-satu.
+  const hasEnemy = list.some(e=>e.type==='enemy');
+  const hasAlly = list.some(e=>e.type==='pc'||e.type==='ally');
+  const aoeOpts = [];
+  if (hasAlly) aoeOpts.push(`<option value="__aoe_ally__">💥 Semua Sekutu/PC (AoE)</option>`);
+  if (hasEnemy) aoeOpts.push(`<option value="__aoe_enemy__">💥 Semua Musuh (AoE)</option>`);
+  if (list.length > 1) aoeOpts.push(`<option value="__aoe_all__">💥 Semua Peserta (AoE)</option>`);
+  const optsHtml = aoeOpts.join('') + (list.map(e=>`<option value="${e.id}">${escapeHtml(e.name)} (${e.type})</option>`).join('')||'<option value="">(belum ada)</option>');
+  sel.innerHTML = optsHtml;
+  if (list.some(e=>e.id===prevVal) || prevVal.startsWith('__aoe_')) sel.value = prevVal;
   const sel2 = document.getElementById('dmStatusTarget');
-  if (sel2) { sel2.innerHTML = sel.innerHTML; if (list.some(e=>e.id===sel2.value)) sel2.value = sel2.value; }
+  if (sel2) { const prev2 = sel2.value; sel2.innerHTML = sel.innerHTML; if (list.some(e=>e.id===prev2) || prev2.startsWith('__aoe_')) sel2.value = prev2; }
   refreshDmActionActorOptions();
 }
 
@@ -1015,7 +1023,12 @@ document.getElementById('btnDmActionRoll').onclick = () => {
         socket.emit('dm:battle-update', { code: CODE, id: actorId, patch });
       }
       const elemTag = elemPct ? ` [${elementType} ${elemPct > 0 ? '+' : ''}${elemPct}%]` : '';
-      status.textContent = `✓ ${actorEntry.name} → ${formula} = ${res.roll.total}.${elemTag}`;
+      if (res.aoe) {
+        const summary = (res.results||[]).map(r=>`${r.entryName}: ${r.roll.total}`).join(', ');
+        status.textContent = `💥 ${actorEntry.name} → ${formula} (AoE ke ${res.results.length} target): ${summary}.`;
+      } else {
+        status.textContent = `✓ ${actorEntry.name} → ${formula} = ${res.roll.total}.${elemTag}`;
+      }
       document.getElementById('dmActionFormula').value = '';
       document.getElementById('dmActionSkill').value = '';
     } else { status.textContent = res?.error||'Gagal.'; }
@@ -1027,7 +1040,8 @@ document.getElementById('btnDmApplyStatus').onclick = () => {
   const targetId = document.getElementById('dmStatusTarget').value; if (!targetId) return;
   const condition = document.getElementById('dmStatusCondition').value; if (!condition) return;
   socket.emit('battle:apply-status', { code: CODE, targetId, condition, actorName: 'DM' }, (res) => {
-    document.getElementById('dmStatusStatus').textContent = res?.ok ? `✓ Kondisi "${condition}" diterapkan.` : (res?.error||'Gagal.');
+    if (res?.ok && res.aoe) document.getElementById('dmStatusStatus').textContent = `💥 Kondisi "${condition}" diterapkan ke ${res.affected.join(', ')}.`;
+    else document.getElementById('dmStatusStatus').textContent = res?.ok ? `✓ Kondisi "${condition}" diterapkan.` : (res?.error||'Gagal.');
   });
 };
 
@@ -1226,6 +1240,25 @@ function rollDice(formula) {
 // =============================== SHOP (data table) =====================
 socket.on('shop-updated', (items) => { state.shop=state.shop||{}; state.shop.items=items; renderShop(); });
 
+// Sama kaya INV_ITEM_TYPES di character.js — dipakai biar efek item toko konsisten sama efek
+// item inventory di battle (heal/damage/buff/dll), jadi pas dibeli langsung nyambung otomatis.
+const SHOP_EFEK_TIPES = [
+  ['misc','📦 Misc (tanpa efek)'],
+  ['heal','💚 Heal (HP)'],
+  ['mana_regen','🔵 Mana Potion (MP)'],
+  ['sp_regen','🟢 Stamina Potion (SP)'],
+  ['damage','⚔ Damage (mis. bom/racun lempar)'],
+  ['buff','🌀 Buff'],
+  ['debuff','🌀 Debuff'],
+  ['cure','✨ Cure Status (hapus kondisi)'],
+  ['revive','⚕ Revive (hapus fatal + heal)']
+];
+const SHOP_EFEK_LABEL = Object.fromEntries(SHOP_EFEK_TIPES);
+(function initShopEfekSelect(){
+  const sel = document.getElementById('shop_efekTipe'); if (!sel) return;
+  sel.innerHTML = SHOP_EFEK_TIPES.map(([k,label])=>`<option value="${k}">${label}</option>`).join('');
+})();
+
 function renderShop() {
   const box = document.getElementById('shopTableBody'); if (!box) return;
   let list = Object.values((state.shop&&state.shop.items)||{});
@@ -1237,15 +1270,20 @@ function renderShop() {
     if (sort === 'type') return (a.tipe||'').localeCompare(b.tipe||'');
     return (a.nama||'').localeCompare(b.nama||'');
   });
-  if (!list.length) { box.innerHTML=`<tr><td colspan="5" class="hint">${q ? 'Tidak ada item yang cocok.' : 'Belum ada item.'}</td></tr>`; return; }
-  box.innerHTML = list.map(it=>`
+  if (!list.length) { box.innerHTML=`<tr><td colspan="6" class="hint">${q ? 'Tidak ada item yang cocok.' : 'Belum ada item.'}</td></tr>`; return; }
+  box.innerHTML = list.map(it=>{
+    const efekTipe = it.efekTipe || 'misc';
+    const efekLabel = efekTipe === 'misc' ? '-' : (SHOP_EFEK_LABEL[efekTipe] || efekTipe);
+    const efekText = efekTipe === 'misc' ? '-' : `${efekLabel}${it.efekFormula ? ' · ' + escapeHtml(it.efekFormula) : ''}${it.aoe ? ' · 💥AoE' : ''}`;
+    return `
     <tr data-id="${it.id}" class="shop-row">
       <td>${escapeHtml(it.nama||'-')}</td>
       <td>🪙${escapeHtml(String(it.harga??0))}</td>
       <td>${escapeHtml(it.tipe||'-')}</td>
       <td>${it.stok===''||it.stok==null?'~':escapeHtml(String(it.stok))}</td>
+      <td class="hint" style="font-size:11px;">${efekText}</td>
       <td class="td-actions"><button type="button" class="small danger shop-del-btn" data-id="${it.id}">🗑</button></td>
-    </tr>`).join('');
+    </tr>`;}).join('');
   box.querySelectorAll('.shop-row').forEach(row => { row.onclick=(e)=>{ if(e.target.closest('button')) return; loadShopItemToForm(state.shop.items[row.dataset.id]); }; });
   box.querySelectorAll('.shop-del-btn').forEach(btn => { btn.onclick=(e)=>{ e.stopPropagation(); if(confirm('Hapus item ini?')) socket.emit('dm:shop-delete-item',{code:CODE,itemId:btn.dataset.id}); }; });
 }
@@ -1257,11 +1295,23 @@ function loadShopItemToForm(it) {
   document.getElementById('shop_tipe').value=it?.tipe||'';
   document.getElementById('shop_stok').value=it?.stok??'';
   document.getElementById('shop_deskripsi').value=it?.deskripsi||'';
+  document.getElementById('shop_efekTipe').value=it?.efekTipe||'misc';
+  document.getElementById('shop_efekFormula').value=it?.efekFormula||'';
+  document.getElementById('shop_aoe').checked=!!it?.aoe;
 }
 document.getElementById('btnShopResetForm').onclick=()=>loadShopItemToForm(null);
 document.getElementById('btnShopSaveItem').onclick=()=>{
   const nama=document.getElementById('shop_nama').value.trim(); if(!nama) return alert('Isi nama item.');
-  const item={id:document.getElementById('shop_id').value||undefined,nama,harga:parseFloat(document.getElementById('shop_harga').value)||0,tipe:document.getElementById('shop_tipe').value,stok:document.getElementById('shop_stok').value,deskripsi:document.getElementById('shop_deskripsi').value};
+  const item={
+    id:document.getElementById('shop_id').value||undefined,nama,
+    harga:parseFloat(document.getElementById('shop_harga').value)||0,
+    tipe:document.getElementById('shop_tipe').value,
+    stok:document.getElementById('shop_stok').value,
+    deskripsi:document.getElementById('shop_deskripsi').value,
+    efekTipe:document.getElementById('shop_efekTipe').value||'misc',
+    efekFormula:document.getElementById('shop_efekFormula').value.trim(),
+    aoe:document.getElementById('shop_aoe').checked
+  };
   socket.emit('dm:shop-save-item',{code:CODE,item},(res)=>{ if(!res?.ok) alert(res?.error||'Gagal.'); else loadShopItemToForm(null); });
 };
 document.getElementById('btnShopClear').onclick=()=>{ if(confirm('Kosongkan semua item toko?')) socket.emit('dm:shop-clear',{code:CODE}); };
@@ -1274,10 +1324,16 @@ document.getElementById('shopImportFile').addEventListener('change', (e)=>{
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws);
       rows.forEach(row=>{
-        const item={nama:row.nama||row.Nama||'',harga:parseFloat(row.harga||row.Harga)||0,tipe:row.tipe||row.Tipe||'',stok:row.stok??row.Stok??'',deskripsi:row.deskripsi||row.Deskripsi||''};
+        const item={
+          nama:row.nama||row.Nama||'',harga:parseFloat(row.harga||row.Harga)||0,tipe:row.tipe||row.Tipe||'',
+          stok:row.stok??row.Stok??'',deskripsi:row.deskripsi||row.Deskripsi||'',
+          efekTipe:row.efekTipe||row.efek_tipe||row.EfekTipe||row.Efek||'misc',
+          efekFormula:row.efekFormula||row.efek_formula||row.EfekFormula||row.Formula||'',
+          aoe: String(row.aoe||row.AoE||row.Aoe||'').trim().toLowerCase()==='true' || String(row.aoe||'')==='1'
+        };
         if(item.nama) socket.emit('dm:shop-save-item',{code:CODE,item});
       });
-      alert(`${rows.length} item berhasil diimport.`);
+      alert(`${rows.length} item berhasil diimport. Kolom efek opsional: efekTipe (misc/heal/damage/buff/debuff/cure/revive/mana_regen/sp_regen), efekFormula (mis. 2d4+2), aoe (true/false).`);
     }catch(err){alert('Gagal import: '+err.message);}
     e.target.value='';
   };
@@ -1285,7 +1341,7 @@ document.getElementById('shopImportFile').addEventListener('change', (e)=>{
 });
 document.getElementById('btnShopExportExcel').onclick=()=>{
   const list=Object.values((state.shop&&state.shop.items)||{});
-  const ws=XLSX.utils.json_to_sheet(list.map(it=>({nama:it.nama,harga:it.harga,tipe:it.tipe,stok:it.stok,deskripsi:it.deskripsi})));
+  const ws=XLSX.utils.json_to_sheet(list.map(it=>({nama:it.nama,harga:it.harga,tipe:it.tipe,stok:it.stok,deskripsi:it.deskripsi,efekTipe:it.efekTipe||'misc',efekFormula:it.efekFormula||'',aoe:!!it.aoe})));
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Shop');
   XLSX.writeFile(wb,'shop_items.xlsx');
 };
