@@ -1193,11 +1193,12 @@ function renderPTokens() {
   const revealed = map.fogRevealed || {};
   Object.values(battleState.tokens || {}).forEach(tok => {
     const mine = tok.ownerId === PLAYER_ID;
-    // Fog of War: kalau kabut nyala, token yang posisinya masih ketutup kabut (belum dibuka DM)
-    // gak dirender sama sekali di sisi player — jadi enemy/NPC yang belum "ditemukan" beneran
-    // gak kelihatan, bukan cuma ketutup lapisan gelap doang. Token milik sendiri tetap kelihatan
-    // (pemain selalu tahu posisi karakternya sendiri).
-    if (fogOn && !mine) {
+    const ownedByAnyPlayer = !!tok.ownerId; // token yang di-assign ke salah satu player (party member)
+    // Fog of War: yang disembunyiin di area gelap cuma token yang DIKENDALIKAN DM (enemy/NPC/dekorasi
+    // tanpa owner) — belum "ditemukan" beneran ya belum kelihatan. Token milik SIAPA PUN yang lagi main
+    // (diri sendiri maupun sesama player/party member) tetap selalu kelihatan, soalnya sesama anggota
+    // party normalnya emang saling tahu posisi satu sama lain, gak ketutup fog of war.
+    if (fogOn && !mine && !ownedByAnyPlayer) {
       const col = Math.min(FOG_COLS - 1, Math.max(0, Math.floor((parseFloat(tok.x) || 0) / 100 * FOG_COLS)));
       const row = Math.min(FOG_ROWS - 1, Math.max(0, Math.floor((parseFloat(tok.y) || 0) / 100 * FOG_ROWS)));
       if (!revealed[col + ',' + row]) return; // masih di area gelap, skip render
