@@ -83,6 +83,36 @@ const GEAR_SLOTS = [['helmet','Helmet'],['armor','Armor'],['gloves','Gloves'],['
   ['accessory1','Accessory I'],['accessory2','Accessory II'],['necklace','Necklace'],['artifact','Artifact / Relic']];
 // gearState: tiap slot = { key, item, stat, amount, equipped } — dipakai (equip) untuk nambah status kaya RPG pada umumnya
 let gearState = GEAR_SLOTS.map(([key]) => ({ key, item: '', stat: '', amount: '', equipped: false }));
+
+// Trait sekarang beneran ngefek ke gameplay — tiap slot = { nama, stat, amount }, aktif terus
+// (gak perlu di-equip kaya gear, soalnya trait ras itu bawaan/inheren). Dihitung ke computeBuffTotals()
+// sama kaya gear & buff, jadi otomatis kepakai ke AC/HP/MP/SP/ATK/DEF effective di battle.
+const RACE_TRAIT_SLOTS = 4;
+const RACE_TRAIT_STAT_OPTIONS = [
+  ['','- (cuma catatan)'],['ac','AC'],['hp_max','HP Max'],['mp_max','MP Max'],['sp_max','SP Max'],
+  ['atk','ATK'],['def','DEF'],['other','Lainnya']
+];
+// Preset Ras — pilih salah satu buat auto-isi 4 slot Trait di atas. Tetap bisa diedit manual
+// setelah di-apply (misal mau nambah/ganti angka), jadi fleksibel tapi tetap ngefek ke battle.
+const RACE_PRESETS = [
+  { id: 'human', nama: 'Manusia', desc: 'Serbaguna, gampang beradaptasi ke kelas apa pun.',
+    traits: [{ nama: 'Serbaguna', stat: 'atk', amount: '1' }, { nama: 'Pekerja Keras', stat: 'def', amount: '1' }] },
+  { id: 'elf', nama: 'Elf', desc: 'Gesit dan dekat dengan sihir.',
+    traits: [{ nama: 'Gesit', stat: 'ac', amount: '2' }, { nama: 'Afinitas Sihir', stat: 'mp_max', amount: '5' }] },
+  { id: 'dwarf', nama: 'Dwarf', desc: 'Tubuh kekar, tahan banting.',
+    traits: [{ nama: 'Tubuh Kekar', stat: 'hp_max', amount: '10' }, { nama: 'Kulit Keras', stat: 'def', amount: '1' }] },
+  { id: 'orc', nama: 'Orc', desc: 'Kekuatan fisik luar biasa, kurang selaras dengan sihir.',
+    traits: [{ nama: 'Kekuatan Buas', stat: 'atk', amount: '2' }, { nama: 'Kurang Selaras Sihir', stat: 'mp_max', amount: '-3' }] },
+  { id: 'beastkin', nama: 'Beastkin', desc: 'Insting pemburu, lincah dan waspada.',
+    traits: [{ nama: 'Insting Pemburu', stat: 'atk', amount: '1' }, { nama: 'Refleks Waspada', stat: 'ac', amount: '1' }] },
+  { id: 'dragonkin', nama: 'Dragonkin', desc: 'Darah naga mengalir, kuat dan tangguh.',
+    traits: [{ nama: 'Darah Naga', stat: 'hp_max', amount: '5' }, { nama: 'Cakar Naga', stat: 'atk', amount: '1' }] },
+  { id: 'undead', nama: 'Undead', desc: 'Stamina tanpa lelah, tapi vitalitasnya rapuh.',
+    traits: [{ nama: 'Tanpa Lelah', stat: 'sp_max', amount: '5' }, { nama: 'Vitalitas Rapuh', stat: 'hp_max', amount: '-5' }] }
+];
+// raceTraitState: array 4 slot { nama, stat, amount } — selalu aktif, gak ada toggle equip
+let raceTraitState = Array.from({ length: RACE_TRAIT_SLOTS }, () => ({ nama: '', stat: '', amount: '' }));
+
 let buffState = [];
 let companionState = [];
 let classCatalog = {};
@@ -306,6 +336,76 @@ function renderGears() {
   });
 }
 
+// =============================== TRAIT (ras + efek stat) =================
+function renderRaceTraits() {
+  const box = document.getElementById('raceTraitContainer');
+  if (!box) return;
+
+  const picker = `
+    <div class="row" style="margin-bottom:8px; align-items:center;">
+      <select id="racePresetPicker" style="flex:1;">
+        <option value="">— Pilih Ras (auto-isi 4 Trait di bawah) —</option>
+        ${RACE_PRESETS.map(r => `<option value="${r.id}">${escapeAttrVal(r.nama)}</option>`).join('')}
+      </select>
+      <button type="button" id="btnApplyRacePreset" class="small secondary" style="white-space:nowrap;">Terapkan</button>
+    </div>
+    <p class="hint" id="racePresetDesc" style="margin:0 0 8px;"></p>`;
+
+  const rows = raceTraitState.map((t, i) => `
+    <div class="inv-row-v2" data-rt="${i}">
+      <div class="inv-header">
+        <span class="inv-num">◆ ${i + 1}</span>
+        <input type="text" data-rf="nama" value="${escapeAttrVal(t.nama)}" placeholder="Nama trait" style="flex:1;">
+      </div>
+      <div class="row" style="margin:0; gap:6px;">
+        <select data-rf="stat" style="max-width:130px;" title="Efek stat trait ini">
+          ${RACE_TRAIT_STAT_OPTIONS.map(([k,l]) => `<option value="${k}" ${t.stat===k?'selected':''}>${l}</option>`).join('')}
+        </select>
+        <input type="text" data-rf="amount" value="${escapeAttrVal(t.amount)}" placeholder="Jumlah (+/-)" style="max-width:110px;">
+        <span class="hint" style="flex:1;">${t.stat ? `✓ Aktif: ${t.stat.toUpperCase()} ${fmtMod(parseFloat(t.amount)||0)}` : ''}</span>
+      </div>
+    </div>`).join('');
+
+  box.innerHTML = picker + rows;
+
+  document.getElementById('racePresetPicker').addEventListener('change', (e) => {
+    const preset = RACE_PRESETS.find(r => r.id === e.target.value);
+    document.getElementById('racePresetDesc').textContent = preset ? preset.desc : '';
+  });
+  document.getElementById('btnApplyRacePreset').addEventListener('click', () => {
+    const id = document.getElementById('racePresetPicker').value;
+    const preset = RACE_PRESETS.find(r => r.id === id);
+    if (!preset) return alert('Pilih ras dulu.');
+    const hasExisting = raceTraitState.some(t => t.nama || t.stat);
+    if (hasExisting && !confirm(`Terapkan trait "${preset.nama}"? Trait yang udah diisi sekarang bakal ketimpa.`)) return;
+    raceTraitState = Array.from({ length: RACE_TRAIT_SLOTS }, (_, i) => {
+      const src = preset.traits[i];
+      return src ? { nama: src.nama, stat: src.stat, amount: src.amount } : { nama: '', stat: '', amount: '' };
+    });
+    // Isi juga field "Ras" (flavor) kalau masih kosong, biar konsisten sama trait yg baru diterapkan
+    const rasEl = document.getElementById('f_ras');
+    if (rasEl && !rasEl.value.trim()) rasEl.value = preset.nama;
+    renderRaceTraits();
+    renderBuffTotalsSummary(document.getElementById('buffTotalsSheet'));
+    renderBattleStatus();
+    scheduleSave();
+  });
+
+  box.querySelectorAll('[data-rt]').forEach(wrap => {
+    const i = parseInt(wrap.dataset.rt, 10);
+    wrap.querySelectorAll('[data-rf]').forEach(el => {
+      const ev = () => {
+        raceTraitState[i][el.dataset.rf] = el.value;
+        renderRaceTraits();
+        renderBuffTotalsSummary(document.getElementById('buffTotalsSheet'));
+        renderBattleStatus();
+        scheduleSave();
+      };
+      el.addEventListener('input', ev); el.addEventListener('change', ev);
+    });
+  });
+}
+
 // =============================== BUFF/DEBUFF ============================
 function computeBuffTotals() {
   const totals = { ac: 0, hp_max: 0, mp_max: 0, sp_max: 0, atk: 0, def: 0, other: 0 };
@@ -320,6 +420,13 @@ function computeBuffTotals() {
     if (!g.equipped) return;
     const stat = g.stat;
     const amount = parseFloat(g.amount);
+    if (!stat || !(stat in totals) || isNaN(amount)) return;
+    totals[stat] += amount;
+  });
+  // Trait ras — selalu aktif (bawaan), gak perlu di-equip kaya gear
+  (raceTraitState || []).forEach(t => {
+    const stat = t.stat;
+    const amount = parseFloat(t.amount);
     if (!stat || !(stat in totals) || isNaN(amount)) return;
     totals[stat] += amount;
   });
@@ -669,9 +776,8 @@ function renderStaticSections() {
   document.getElementById('skillPassiveContainer').innerHTML = skillBlock('sk_passive', 2, 'buff');
   document.getElementById('skillUltimateContainer').innerHTML = skillBlock('sk_ultimate', 2, 'ultimate');
 
-  // Trait (Race)
-  document.getElementById('raceTraitContainer').innerHTML = Array.from({ length: 4 }).map((_, i) =>
-    `<div class="field"><label>◆ Trait ${i+1}</label><input type="text" id="rt_${i}"></div>`).join('');
+  // Trait (Race) — sekarang punya efek stat beneran, render-nya di renderRaceTraits()
+  renderRaceTraits();
 
   // Atribut Elemen (class trait renamed)
   document.getElementById('classTraitContainer').innerHTML = ELEMENT_KEYS.map(([key, label]) => `
@@ -821,7 +927,15 @@ function fillForm(sheet) {
     : [];
   renderBuffsSheet(); renderBuffsBattle(); syncConditionsFromBuffs();
 
-  (sheet.race_trait || []).forEach((t, i) => { const el = document.getElementById(`rt_${i}`); if (el) el.value = t || ''; });
+  // race_trait dulu array of string (flavor text doang), sekarang array of {nama,stat,amount} biar ngefek ke gameplay.
+  // Data lama otomatis dikonversi: string jadi {nama: string, stat:'', amount:''} (gak ngefek, tinggal diedit manual).
+  raceTraitState = Array.from({ length: RACE_TRAIT_SLOTS }, (_, i) => {
+    const src = (sheet.race_trait || [])[i];
+    if (src && typeof src === 'object') return { nama: src.nama || '', stat: src.stat || '', amount: src.amount || '' };
+    if (typeof src === 'string' && src) return { nama: src, stat: '', amount: '' };
+    return { nama: '', stat: '', amount: '' };
+  });
+  renderRaceTraits();
 
   const ct = sheet.class_trait || {};
   ELEMENT_KEYS.forEach(([key]) => {
@@ -860,7 +974,7 @@ function readForm() {
     companions: companionState,
     skills: { active: [], passive: [], ultimate: [] },
     buffs: buffState,
-    race_trait: Array.from({ length: 4 }).map((_, i) => val(`rt_${i}`)),
+    race_trait: raceTraitState,
     class_trait: {},
     catatan_lain: val('f_catatan_lain')
   };

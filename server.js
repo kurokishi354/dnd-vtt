@@ -219,7 +219,10 @@ function blankSheet(name) {
       ultimate: Array.from({ length: 2 }, () => ({ nama: '', rank: '', mp_cost: '', sp_cost: '', formula: '', action: 'ultimate', statusEffect: '', desc: '' }))
     },
     buffs: [],
-    race_trait: ['', '', '', ''],
+    // race_trait sekarang array of {nama, stat, amount} — trait bawaan ras yang beneran ngefek ke
+    // AC/HP/MP/SP/ATK/DEF (dihitung bareng gear & buff di client). Sheet lama (array of string,
+    // sebelum fitur ini) otomatis dikonversi jadi {nama: string, stat:'', amount:''} di client.
+    race_trait: Array.from({ length: 4 }, () => ({ nama: '', stat: '', amount: '' })),
     class_trait: { fire: '', ice: '', lightning: '', poison: '', dark: '', light: '', physical: '', magic: '' },
     catatan_lain: ''
   };
