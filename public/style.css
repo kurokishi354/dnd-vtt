@@ -693,6 +693,17 @@ button.secondary { background: rgba(255,255,255,.25); box-shadow: none; }
 .page-tabs.sub-tabs { margin-top: 0; margin-bottom: 10px; }
 .page-tabs.sub-tabs button { font-size: 12px; padding: 5px 12px; }
 
+/* Map tabs (DM & player) — tiap tab = 1 map/lantai/scene, DM bisa tambah/hapus/ganti nama */
+.map-tabs-bar, .map-tab-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+.map-tabs-bar button, .map-tab-bar button {
+  background: var(--panel-bg, rgba(255,255,255,.06)); color: var(--text, #e8dfc8);
+  border: 1px solid rgba(224,189,122,.35); border-radius: 6px; padding: 6px 12px;
+  font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.map-tabs-bar button.active, .map-tab-bar button.active { background: var(--navy); color: var(--gold-bright); border-color: var(--gold-bright); }
+.map-tabs-bar button .map-tab-close { opacity: .6; font-weight: 700; padding: 0 2px; }
+.map-tabs-bar button .map-tab-close:hover { opacity: 1; color: var(--crimson-bright); }
+
 /* HP bar on sheet */
 .hp-bar-wrap { height: 10px; background: rgba(0,0,0,.2); border-radius: 5px; overflow: hidden; margin-top: 2px; }
 .hp-bar { height: 100%; background: linear-gradient(90deg, #2ecc71, #27ae60); border-radius: 5px; transition: width .3s; }

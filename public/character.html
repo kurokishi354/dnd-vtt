@@ -410,17 +410,10 @@
 
   <!-- ===== TAB: PETA & BATTLE (digabung) ===== -->
   <div id="tab-map" style="display:none;">
-    <div class="map-tab-bar" id="mapTabBar">
-      <!-- tabs ditambah dinamis kalau DM kirim beberapa map -->
-      <button class="active" data-maptab="main" id="mapTabMain">🗺 Peta Utama</button>
-    </div>
     <div class="panel">
-      <div class="panel-header">🗺 Peta Pertempuran</div>
+      <div class="panel-header">🗺 Peta Pertempuran <span class="hint" id="pMapNameLabel" style="font-weight:400;"></span></div>
       <div class="map-toolbar-row">
-        <span class="hint">Peta menyesuaikan ukuran gambar aslinya — geser token langsung di atasnya.</span>
-        <label class="hint" style="margin-left:auto; display:flex; align-items:center; gap:4px;">
-          <input type="checkbox" id="pFogToggle" checked style="width:auto;"> Tampilkan Fog of War
-        </label>
+        <span class="hint">Peta menyesuaikan ukuran gambar aslinya — geser token langsung di atasnya. DM yang mengatur peta & kabut mana yang aktif.</span>
       </div>
       <div class="map-wrap no-image" id="pMapWrap">
         <img id="pMapImg" class="map-img" src="" alt="" style="display:none;">

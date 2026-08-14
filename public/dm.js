@@ -25,7 +25,7 @@ function showDmTab(name) {
   document.querySelectorAll('.page-tabs button').forEach(b => b.classList.remove('active'));
   const btnMap = { main:'tabBtnDmMain', players:'tabBtnDmPlayers', npc:'tabBtnDmNpc', classes:'tabBtnDmClasses', shop:'tabBtnDmShop', music:'tabBtnDmMusic', battle:'tabBtnDmBattle', map:'tabBtnDmMap' };
   const btn = document.getElementById(btnMap[name]); if (btn) btn.classList.add('active');
-  if (name === 'map') renderMap();
+  if (name === 'map') { renderMapTabs(); renderMap(); }
 }
 document.getElementById('tabBtnDmMain').addEventListener('click', () => showDmTab('main'));
 document.getElementById('tabBtnDmPlayers').addEventListener('click', () => showDmTab('players'));
@@ -54,6 +54,9 @@ socket.on('connect', () => {
     if (!res.ok) { alert(res.error || 'Sesi tidak ditemukan.'); location.href = '/'; return; }
     state = res.state;
     state.playersList = state.playersList || Object.values(state.players).map(p => ({ id: p.id, name: p.name, online: !!p.socketId, nama_karakter: p.sheet.nama_karakter, kelas: p.sheet.kelas, lv: p.sheet.lv, current_hp: p.sheet.current_hp, max_hp: p.sheet.max_hp }));
+    // Server kirim daftar map sebagai array [{id,name}] — ubah ke dict id->obj biar gampang dipakai renderMapTabs()
+    state.maps = Object.fromEntries((state.maps||[]).map(m => [m.id, m]));
+    currentMapTabId = state.activeMapId || 'main';
     renderAll();
   });
 });
@@ -559,7 +562,57 @@ const mapInner = document.getElementById('mapInner');
 const gridOverlay = document.getElementById('gridOverlay');
 
 socket.on('map-updated', (map) => { state.map = map; if (document.getElementById('tab-dm-map').style.display !== 'none') renderMap(); });
+// Daftar tab map (id+nama tiap map) + map mana yang lagi aktif — dikirim ulang tiap kali DM nambah/hapus/pindah/rename map.
+socket.on('maps-updated', ({ maps, activeMapId }) => {
+  state.maps = Object.fromEntries((maps||[]).map(m => [m.id, m]));
+  state.activeMapId = activeMapId;
+  currentMapTabId = activeMapId;
+  renderMapTabs();
+});
 mapImg.addEventListener('load', () => { if (document.getElementById('tab-dm-map').style.display !== 'none') renderFogCanvasDm(); });
+
+function renderMapTabs() {
+  const bar = document.getElementById('dmMapTabsBar');
+  if (!bar) return;
+  const maps = Object.values(state.maps || {});
+  const canDelete = maps.length > 1;
+  bar.innerHTML = maps.map(m => `
+    <button type="button" class="${m.id === state.activeMapId ? 'active' : ''}" data-mapid="${m.id}">
+      🗺 <span class="map-tab-label">${escapeHtml(m.name || 'Map')}</span>${canDelete ? `<span class="map-tab-close" data-del-mapid="${m.id}" title="Hapus map ini">✕</span>` : ''}
+    </button>`).join('') + `<button type="button" id="btnAddMapTab" class="small secondary" style="border-radius:4px;">+ Map Baru</button>`;
+
+  bar.querySelectorAll('button[data-mapid]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      if (e.target.closest('[data-del-mapid]')) return; // klik tombol hapus ditangani terpisah, jangan ikut switch tab
+      const mapId = btn.dataset.mapid;
+      if (mapId === state.activeMapId) return;
+      socket.emit('dm:map-switch', { code: CODE, mapId }, (res) => { if (!res?.ok) alert(res?.error||'Gagal pindah map.'); });
+    });
+    btn.addEventListener('dblclick', () => {
+      const mapId = btn.dataset.mapid;
+      const cur = (state.maps[mapId]||{}).name || 'Map';
+      const name = prompt('Nama map:', cur);
+      if (name && name.trim()) socket.emit('dm:map-rename', { code: CODE, mapId, name: name.trim() });
+    });
+  });
+  bar.querySelectorAll('[data-del-mapid]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mapId = el.dataset.delMapid;
+      const name = (state.maps[mapId]||{}).name || 'map ini';
+      if (!confirm(`Hapus "${name}"? Semua token & fog di map ini ikut terhapus.`)) return;
+      socket.emit('dm:map-delete', { code: CODE, mapId }, (res) => { if (!res?.ok) alert(res?.error||'Gagal menghapus map.'); });
+    });
+  });
+  const addBtn = document.getElementById('btnAddMapTab');
+  if (addBtn) addBtn.onclick = () => {
+    const name = prompt('Nama map baru:', `Map ${maps.length + 1}`);
+    if (name === null) return; // dibatalkan
+    socket.emit('dm:map-add', { code: CODE, name: name.trim() || `Map ${maps.length + 1}` }, (res) => {
+      if (!res?.ok) alert(res?.error||'Gagal membuat map baru.');
+    });
+  };
+}
 
 // =============================== FOG OF WAR (brush reveal) =============
 const FOG_COLS = 30, FOG_ROWS = 20; // resolusi logis kabut, independen dari grid visual — konsisten di semua layar
@@ -1358,7 +1411,7 @@ document.getElementById('sessionNotes').addEventListener('input', ()=>{
 function renderAll() {
   renderPlayers(); renderNpcs(); renderClasses(); renderBattle(); renderMusic(); renderShop(); renderLog();
   refreshBattleSourceOptions(); refreshTokenOwnerOptions();
-  if (document.getElementById('tab-dm-map').style.display !== 'none') renderMap();
+  if (document.getElementById('tab-dm-map').style.display !== 'none') { renderMapTabs(); renderMap(); }
   const notesEl = document.getElementById('sessionNotes');
   if (notesEl && document.activeElement !== notesEl) notesEl.value = state.notes || '';
 }

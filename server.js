@@ -146,8 +146,41 @@ function ensureSessionDefaults(session) {
   if (!session.music.playback) session.music.playback = blankMusic().playback;
   if (!session.shop) session.shop = { items: {} };
   if (!session.npcs) session.npcs = {};
+  // Migrasi peta lama (1 map + 1 dict token flat) -> banyak map, tiap map punya token & fog sendiri.
+  // Biar bisa DM benar-benar bikin "Map 2", "Map 3" dst (mis. per lantai dungeon) tanpa numpuk token lintas map.
+  if (!session.maps) {
+    const legacyMap = session.map || {};
+    const mainMap = newMap('Map 1');
+    mainMap.id = 'main';
+    Object.assign(mainMap, legacyMap);
+    mainMap.tokens = session.tokens || {};
+    if (!mainMap.fogRevealed) mainMap.fogRevealed = {};
+    session.maps = { main: mainMap };
+    session.activeMapId = 'main';
+    delete session.map;
+    delete session.tokens;
+  }
+  if (!session.maps[session.activeMapId]) session.activeMapId = Object.keys(session.maps)[0];
+  Object.values(session.maps).forEach(m => {
+    if (!m.tokens) m.tokens = {};
+    if (!m.fogRevealed) m.fogRevealed = {};
+  });
   Object.values(session.players || {}).forEach(ensurePlayerDefaults);
   return session;
+}
+// Bikin objek map baru (dipakai pas create-session & pas DM klik "+ Map Baru")
+function newMap(name) {
+  return {
+    id: genId('map'), name: name || 'Map',
+    imageUrl: null, width: null, height: null,
+    gridSize: 50, gridVisible: true, offsetX: 0, offsetY: 0,
+    fogVisible: false, fogRevealed: {}, tokens: {}
+  };
+}
+function activeMap(session) { return session.maps[session.activeMapId]; }
+// Daftar ringkas map buat kirim tab list ke client (gak perlu kirim semua token/fog tiap map sekaligus)
+function mapTabList(session) {
+  return Object.values(session.maps).map(m => ({ id: m.id, name: m.name }));
 }
 function ensurePlayerDefaults(player) {
   if (!Array.isArray(player.unlockedClasses)) player.unlockedClasses = [];
@@ -271,8 +304,10 @@ function sessionStateForDM(session) {
     players: session.players,
     npcs: session.npcs,
     classes: session.classes || {},
-    map: session.map,
-    tokens: session.tokens,
+    maps: mapTabList(session),
+    activeMapId: session.activeMapId,
+    map: activeMap(session),
+    tokens: activeMap(session).tokens,
     battle: session.battle,
     music: session.music,
     shop: session.shop || { items: {} },
@@ -288,8 +323,10 @@ function sessionStateForPlayer(session, playerId) {
     players: publicPlayerList(session),
     playersList: publicPlayerList(session),
     classes: session.classes || {},
-    map: session.map,
-    tokens: session.tokens,
+    maps: mapTabList(session),
+    activeMapId: session.activeMapId,
+    map: activeMap(session),
+    tokens: activeMap(session).tokens,
     battle: session.battle,
     music: session.music,
     shop: session.shop || { items: {} },
@@ -566,8 +603,8 @@ io.on('connection', (socket) => {
       players: {},
       npcs: {},
       classes: {},
-      map: { imageUrl: null, gridSize: 50, gridVisible: true, offsetX: 0, offsetY: 0, fogVisible: false, fogRevealed: {} },
-      tokens: {},
+      maps: { main: Object.assign(newMap('Map 1'), { id: 'main' }) },
+      activeMapId: 'main',
       battle: { entries: {}, turn: { activeId: null, round: 1 } },
       music: blankMusic(),
       log: [],
@@ -731,9 +768,12 @@ io.on('connection', (socket) => {
   socket.on('dm:remove-player', ({ code, playerId }, cb) => {
     const session = sessions[code];
     if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    ensureSessionDefaults(session);
     const player = session.players[playerId];
-    Object.keys(session.tokens || {}).forEach(tid => {
-      if (session.tokens[tid].ownerId === playerId) delete session.tokens[tid];
+    Object.values(session.maps || {}).forEach(m => {
+      Object.keys(m.tokens || {}).forEach(tid => {
+        if (m.tokens[tid].ownerId === playerId) delete m.tokens[tid];
+      });
     });
     Object.keys(session.battle.entries || {}).forEach(eid => {
       const en = session.battle.entries[eid];
@@ -747,7 +787,7 @@ io.on('connection', (socket) => {
       io.sockets.sockets.get(kickedSocketId)?.leave('room-' + code);
     }
     io.to('dm-' + code).emit('players-update', publicPlayerList(session));
-    io.to('room-' + code).emit('tokens-updated', session.tokens);
+    io.to('room-' + code).emit('tokens-updated', activeMap(session).tokens);
     io.to('room-' + code).emit('battle-updated', session.battle);
     cb && cb({ ok: true });
   });
@@ -773,10 +813,13 @@ io.on('connection', (socket) => {
   socket.on('dm:delete-player', ({ code, playerId }, cb) => {
     const session = sessions[code];
     if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    ensureSessionDefaults(session);
     const player = session.players[playerId];
 
-    Object.keys(session.tokens || {}).forEach(tid => {
-      if (session.tokens[tid].ownerId === playerId) delete session.tokens[tid];
+    Object.values(session.maps || {}).forEach(m => {
+      Object.keys(m.tokens || {}).forEach(tid => {
+        if (m.tokens[tid].ownerId === playerId) delete m.tokens[tid];
+      });
     });
     Object.keys(session.battle.entries || {}).forEach(eid => {
       const en = session.battle.entries[eid];
@@ -792,7 +835,7 @@ io.on('connection', (socket) => {
       io.sockets.sockets.get(kickedSocketId)?.leave('room-' + code);
     }
     io.to('dm-' + code).emit('players-update', publicPlayerList(session));
-    io.to('room-' + code).emit('tokens-updated', session.tokens);
+    io.to('room-' + code).emit('tokens-updated', activeMap(session).tokens);
     io.to('room-' + code).emit('battle-updated', session.battle);
     cb && cb({ ok: true });
   });
@@ -1055,85 +1098,162 @@ io.on('connection', (socket) => {
     io.to('dm-' + code).emit('npcs-update', session.npcs);
   });
 
-  // === DM: update map (gambar + grid) ===
+  // === DM: update map (gambar + grid) — selalu ke map yang lagi aktif/dibuka DM ===
   socket.on('dm:update-map', ({ code, imageUrl, width, height }) => {
     const session = sessions[code];
     if (!session) return;
-    session.map.imageUrl = imageUrl;
-    session.map.width = width;
-    session.map.height = height;
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    map.imageUrl = imageUrl;
+    map.width = width;
+    map.height = height;
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('map-updated', session.map);
+    io.to('room-' + code).emit('map-updated', map);
   });
 
   socket.on('dm:update-grid', ({ code, gridSize, gridVisible, offsetX, offsetY, fogVisible }) => {
     const session = sessions[code];
     if (!session) return;
-    if (gridSize != null) session.map.gridSize = gridSize;
-    if (gridVisible != null) session.map.gridVisible = gridVisible;
-    if (fogVisible != null) session.map.fogVisible = fogVisible;
-    if (offsetX != null) session.map.offsetX = offsetX;
-    if (offsetY != null) session.map.offsetY = offsetY;
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    if (gridSize != null) map.gridSize = gridSize;
+    if (gridVisible != null) map.gridVisible = gridVisible;
+    if (fogVisible != null) map.fogVisible = fogVisible;
+    if (offsetX != null) map.offsetX = offsetX;
+    if (offsetY != null) map.offsetY = offsetY;
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('map-updated', session.map);
+    io.to('room-' + code).emit('map-updated', map);
   });
 
   // Fog of war: DM klik/drag buat "menghapus" (reveal) atau menutup lagi sel kabut di map
   socket.on('dm:fog-paint', ({ code, cells, reveal }) => {
     const session = sessions[code];
     if (!session) return;
-    if (!session.map.fogRevealed) session.map.fogRevealed = {};
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    if (!map.fogRevealed) map.fogRevealed = {};
     (cells || []).forEach(key => {
-      if (reveal) session.map.fogRevealed[key] = 1;
-      else delete session.map.fogRevealed[key];
+      if (reveal) map.fogRevealed[key] = 1;
+      else delete map.fogRevealed[key];
     });
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('map-updated', session.map);
+    io.to('room-' + code).emit('map-updated', map);
   });
 
   socket.on('dm:fog-reset', ({ code }) => {
     const session = sessions[code];
     if (!session) return;
-    session.map.fogRevealed = {};
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    map.fogRevealed = {};
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('map-updated', session.map);
+    io.to('room-' + code).emit('map-updated', map);
   });
 
-  // === Token (dipakai DM & Player, dengan pengecekan kepemilikan sederhana) ===
+  // === DM: kelola banyak map (tab) — bikin baru, pindah tab aktif, hapus tab ===
+  socket.on('dm:map-add', ({ code, name }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    const existingCount = Object.keys(session.maps).length;
+    const map = newMap(name || `Map ${existingCount + 1}`);
+    session.maps[map.id] = map;
+    session.activeMapId = map.id;
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('maps-updated', { maps: mapTabList(session), activeMapId: session.activeMapId });
+    io.to('room-' + code).emit('map-updated', map);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
+    cb && cb({ ok: true, mapId: map.id });
+  });
+
+  socket.on('dm:map-switch', ({ code, mapId }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!session.maps[mapId]) return cb && cb({ ok: false, error: 'Map tidak ditemukan.' });
+    session.activeMapId = mapId;
+    saveSessionsDebounced(code);
+    const map = activeMap(session);
+    io.to('room-' + code).emit('maps-updated', { maps: mapTabList(session), activeMapId: session.activeMapId });
+    io.to('room-' + code).emit('map-updated', map);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
+    cb && cb({ ok: true });
+  });
+
+  socket.on('dm:map-rename', ({ code, mapId, name }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    const map = session.maps[mapId];
+    if (!map) return cb && cb({ ok: false, error: 'Map tidak ditemukan.' });
+    map.name = (name || '').trim() || map.name;
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('maps-updated', { maps: mapTabList(session), activeMapId: session.activeMapId });
+    cb && cb({ ok: true });
+  });
+
+  socket.on('dm:map-delete', ({ code, mapId }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    const ids = Object.keys(session.maps);
+    if (ids.length <= 1) return cb && cb({ ok: false, error: 'Minimal harus ada 1 map.' });
+    if (!session.maps[mapId]) return cb && cb({ ok: false, error: 'Map tidak ditemukan.' });
+    delete session.maps[mapId];
+    if (session.activeMapId === mapId) session.activeMapId = Object.keys(session.maps)[0];
+    saveSessionsDebounced(code);
+    const map = activeMap(session);
+    io.to('room-' + code).emit('maps-updated', { maps: mapTabList(session), activeMapId: session.activeMapId });
+    io.to('room-' + code).emit('map-updated', map);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
+    cb && cb({ ok: true });
+  });
+
+  // === Token (dipakai DM & Player, dengan pengecekan kepemilikan sederhana) — selalu di map aktif ===
   socket.on('token:add', ({ code, token }) => {
     const session = sessions[code];
     if (!session) return;
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
     token.id = token.id || genId('tok');
-    session.tokens[token.id] = token;
+    map.tokens[token.id] = token;
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('tokens-updated', session.tokens);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
   });
 
   socket.on('token:move', ({ code, tokenId, x, y }) => {
     const session = sessions[code];
-    if (!session || !session.tokens[tokenId]) return;
-    const tok = session.tokens[tokenId];
+    if (!session) return;
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    if (!map.tokens[tokenId]) return;
+    const tok = map.tokens[tokenId];
     // Player hanya boleh gerakkan token miliknya sendiri; DM boleh gerakkan semua
     if (socket.data.role === 'player' && tok.ownerId !== socket.data.playerId) return;
     tok.x = x; tok.y = y;
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('tokens-updated', session.tokens);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
   });
 
   socket.on('token:update', ({ code, tokenId, patch }) => {
     const session = sessions[code];
-    if (!session || !session.tokens[tokenId]) return;
-    Object.assign(session.tokens[tokenId], patch);
+    if (!session) return;
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    if (!map.tokens[tokenId]) return;
+    Object.assign(map.tokens[tokenId], patch);
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('tokens-updated', session.tokens);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
   });
 
   socket.on('token:remove', ({ code, tokenId }) => {
     const session = sessions[code];
     if (!session) return;
-    delete session.tokens[tokenId];
+    ensureSessionDefaults(session);
+    const map = activeMap(session);
+    delete map.tokens[tokenId];
     saveSessionsDebounced(code);
-    io.to('room-' + code).emit('tokens-updated', session.tokens);
+    io.to('room-' + code).emit('tokens-updated', map.tokens);
   });
 
   // === Battle & Turn (allies / PC / enemy, digerakkan initiative) ===

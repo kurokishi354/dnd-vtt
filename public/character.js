@@ -121,7 +121,7 @@ let shopItems = {};
 
 // Battle state
 const battleState = {
-  map: {}, tokens: {},
+  map: {}, tokens: {}, maps: {}, activeMapId: 'main',
   battle: { entries: {}, turn: { activeId: null, round: 1 } },
   music: { tracks: {}, playback: { trackId: null, isPlaying: false, startTs: 0, position: 0, volume: 0.7, loop: false } }
 };
@@ -1063,6 +1063,9 @@ socket.on('connect', () => {
     renderClassPicker();
     battleState.map = res.state.map || {};
     battleState.tokens = res.state.tokens || {};
+    battleState.maps = Object.fromEntries((res.state.maps||[]).map(m => [m.id, m]));
+    battleState.activeMapId = res.state.activeMapId || 'main';
+    { const label = document.getElementById('pMapNameLabel'); if (label) { const nm = (battleState.maps[battleState.activeMapId]||{}).name || ''; label.textContent = nm ? `— ${nm}` : ''; } }
     battleState.battle = res.state.battle || { entries: {}, turn: { activeId: null, round: 1 } };
     battleState.music = res.state.music || { tracks: {}, playback: { trackId: null, isPlaying: false, startTs: 0, position: 0, volume: 0.7, loop: false } };
     diceLog = res.state.log || [];
@@ -1101,13 +1104,19 @@ const pGridOverlay = document.getElementById('pGridOverlay');
 
 socket.on('map-updated', (map) => { battleState.map = map; renderPMap(); });
 socket.on('tokens-updated', (tokens) => { battleState.tokens = tokens; renderPTokens(); });
+// DM yang atur peta mana yang lagi aktif (mis. pindah ke "Lantai 2 Dungeon") — player otomatis
+// ikut pindah, gak bisa milih sendiri, biar peta yang belum waktunya gak kebuka duluan.
+socket.on('maps-updated', ({ maps, activeMapId }) => {
+  battleState.maps = Object.fromEntries((maps||[]).map(m => [m.id, m]));
+  battleState.activeMapId = activeMapId;
+  const label = document.getElementById('pMapNameLabel');
+  if (label) {
+    const name = (battleState.maps[activeMapId]||{}).name || '';
+    label.textContent = name ? `— ${name}` : '';
+  }
+});
 
 function initMapControls() {
-  // Fog toggle (tampilkan/sembunyikan kabut buat tampilan sendiri)
-  document.getElementById('pFogToggle').addEventListener('change', (e) => {
-    pFogShown = e.target.checked;
-    renderFogCanvasPlayer();
-  });
   window.addEventListener('resize', () => renderFogCanvasPlayer());
   // Peta gak butuh reflow khusus pas gambar kelar dimuat — cukup re-render fog
   pMapImg.addEventListener('load', () => renderFogCanvasPlayer());
@@ -1130,17 +1139,15 @@ function renderPMap() {
       `repeating-linear-gradient(0deg, rgba(220,190,120,.55) 0 1px, transparent 1px ${size}px),
        repeating-linear-gradient(90deg, rgba(220,190,120,.55) 0 1px, transparent 1px ${size}px)`;
   } else { pGridOverlay.style.backgroundImage = 'none'; }
-  renderFogCanvasPlayer();
-  renderPTokens();
+  renderFogCanvasPlayer(); // ini juga otomatis manggil renderPTokens() di akhirnya
 }
 
-// =============================== FOG OF WAR (player, view-only) =========
+// =============================== FOG OF WAR (player, view-only, DM yang kendaliin on/off) ====
 const FOG_COLS = 30, FOG_ROWS = 20; // sama persis dengan resolusi di sisi DM biar sinkron
 const fogCanvasPlayer = document.getElementById('pFogLayer');
-let pFogShown = true;
 function renderFogCanvasPlayer() {
   const map = battleState.map || {};
-  if (!map.fogVisible || !pFogShown) { fogCanvasPlayer.style.display = 'none'; return; }
+  if (!map.fogVisible) { fogCanvasPlayer.style.display = 'none'; renderPTokens(); return; }
   fogCanvasPlayer.style.display = '';
   const w = pMapInner.offsetWidth || pMapWrap.offsetWidth || 800;
   const h = pMapInner.offsetHeight || pMapWrap.offsetHeight || 400;
@@ -1157,6 +1164,7 @@ function renderFogCanvasPlayer() {
     ctx.fillRect(c * cw, r * ch, cw + 1, ch + 1);
   });
   ctx.globalCompositeOperation = 'source-over';
+  renderPTokens();
 }
 
 let pDraggingTokenId = null;
@@ -1180,8 +1188,20 @@ window.addEventListener('mouseup', (e) => {
 
 function renderPTokens() {
   pMapInner.querySelectorAll('.token').forEach(el => el.remove());
+  const map = battleState.map || {};
+  const fogOn = !!map.fogVisible;
+  const revealed = map.fogRevealed || {};
   Object.values(battleState.tokens || {}).forEach(tok => {
     const mine = tok.ownerId === PLAYER_ID;
+    // Fog of War: kalau kabut nyala, token yang posisinya masih ketutup kabut (belum dibuka DM)
+    // gak dirender sama sekali di sisi player — jadi enemy/NPC yang belum "ditemukan" beneran
+    // gak kelihatan, bukan cuma ketutup lapisan gelap doang. Token milik sendiri tetap kelihatan
+    // (pemain selalu tahu posisi karakternya sendiri).
+    if (fogOn && !mine) {
+      const col = Math.min(FOG_COLS - 1, Math.max(0, Math.floor((parseFloat(tok.x) || 0) / 100 * FOG_COLS)));
+      const row = Math.min(FOG_ROWS - 1, Math.max(0, Math.floor((parseFloat(tok.y) || 0) / 100 * FOG_ROWS)));
+      if (!revealed[col + ',' + row]) return; // masih di area gelap, skip render
+    }
     const el = document.createElement('div');
     el.className = 'token' + (mine ? ' draggable mine' : '');
     el.style.left = tok.x + '%';

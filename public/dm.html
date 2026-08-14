@@ -449,11 +449,8 @@
   <div class="panel">
     <div class="panel-header">🗺 Peta &amp; Grid</div>
 
-    <!-- Map sub-tabs -->
-    <div class="map-tabs-bar" id="dmMapTabsBar">
-      <button class="active" data-maptab="main" id="dmMapTabMain">🗺 Map 1</button>
-      <button id="btnAddMapTab" class="small secondary" style="border-radius:4px;">+ Map Baru</button>
-    </div>
+    <!-- Map sub-tabs (dirender dinamis oleh JS dari daftar map sesi) -->
+    <div class="map-tabs-bar" id="dmMapTabsBar"></div>
 
     <div class="map-toolbar">
       <input type="file" id="mapUpload" accept="image/*" title="Upload gambar map">
@@ -467,7 +464,7 @@
       <label class="hint" style="margin:0; display:flex; align-items:center; gap:4px;">
         <input type="checkbox" id="fogVisible" style="width:16px;"> Fog of War (DM)
       </label>
-      <button id="btnDeleteMap" class="small secondary" style="color:var(--crimson-bright);">🗑 Hapus Map Ini</button>
+      <button id="btnDeleteMap" class="small secondary" style="color:var(--crimson-bright);" title="Cuma hapus gambarnya, token & fog di map ini tetap ada">🗑 Hapus Gambar Peta</button>
     </div>
 
     <!-- Token toolbar -->
