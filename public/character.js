@@ -128,8 +128,8 @@ const battleState = {
 let diceLog = [];
 let onlinePlayersList = [];
 let storyState = { scene: { title:'', desc:'', imageUrl:null, active:false }, dialogue: { npcName:'', npcPortrait:null, text:'', active:false }, quests: {} };
-let sceneBannerDismissedAt = 0;
-let dialogueBoxDismissedAt = 0;
+let sceneBannerDismissedAt = parseInt(localStorage.getItem('dnd_scene_dismissed_' + CODE) || '0', 10) || 0;
+let dialogueBoxDismissedAt = parseInt(localStorage.getItem('dnd_dialogue_dismissed_' + CODE) || '0', 10) || 0;
 
 // Map state (no zoom — peta selalu fit ke ukuran gambar aslinya)
 
@@ -1687,6 +1687,7 @@ function renderSceneBanner() {
 }
 document.getElementById('btnSceneBannerClose').addEventListener('click', () => {
   sceneBannerDismissedAt = Date.now();
+  localStorage.setItem('dnd_scene_dismissed_' + CODE, String(sceneBannerDismissedAt));
   document.getElementById('sceneBanner').classList.remove('show');
 });
 socket.on('scene-updated', (scene) => {
@@ -1712,6 +1713,7 @@ function renderDialogueBox() {
 }
 document.getElementById('btnDialogueClose').addEventListener('click', () => {
   dialogueBoxDismissedAt = Date.now();
+  localStorage.setItem('dnd_dialogue_dismissed_' + CODE, String(dialogueBoxDismissedAt));
   document.getElementById('dialogueBox').classList.remove('show');
 });
 socket.on('dialogue-updated', (dialogue) => {
