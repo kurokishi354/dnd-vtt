@@ -428,6 +428,83 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 .error-msg { color: var(--crimson-bright); font-size: 12px; margin-top: 4px; }
 
+/* ---------- landing: header ---------- */
+.landing-sheet { padding-top: 30px; }
+.landing-header { text-align: center; margin-bottom: 14px; }
+.landing-title {
+  font-size: 30px;
+  color: var(--navy);
+  letter-spacing: .12em;
+}
+.landing-header .rpg-divider { margin: 6px 0 8px; }
+.landing-subtitle { font-size: 14px; margin: 0; }
+
+/* ---------- landing: role tiles ---------- */
+.role-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+.role-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 18px 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.22));
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  color: var(--navy);
+  box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, var(--shadow);
+  transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.role-tile:hover {
+  transform: translateY(-3px);
+  border-color: var(--gold-bright);
+  box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 6px 16px rgba(0,0,0,.3);
+}
+.role-tile-icon { font-size: 30px; line-height: 1; margin-bottom: 2px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
+.role-tile-title { font-family: 'Cinzel', serif; font-weight: 700; font-size: 14px; letter-spacing: .03em; }
+.role-tile-desc { font-family: 'Cormorant Garamond', serif; font-size: 12.5px; color: var(--ink-soft); line-height: 1.25; }
+.role-tile-dm { border-color: var(--gold); }
+.role-tile-dm:hover { box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 0 0 1px var(--gold-bright) inset, 0 6px 16px rgba(184,147,79,.3); }
+.role-tile-player:hover { box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 0 0 1px var(--sapphire) inset, 0 6px 16px rgba(43,92,134,.3); }
+
+@media (max-width: 420px) {
+  .role-tiles { grid-template-columns: 1fr; }
+}
+
+/* ---------- landing: DM/player flow sections ---------- */
+.landing-flow { margin-top: 16px; animation: landingFlowIn .18s ease; }
+@keyframes landingFlowIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.landing-flow-title {
+  font-family: 'Cinzel', serif;
+  font-size: 13px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--gold-bright);
+  background: linear-gradient(180deg, #1c2c4c, var(--navy) 70%);
+  box-shadow: inset 0 1px 0 rgba(224,189,122,.3), 0 2px 4px rgba(0,0,0,.3);
+  border-radius: 5px;
+  padding: 7px 12px;
+  text-align: center;
+  margin: 0 0 12px;
+}
+.landing-back { display: block; margin: 12px auto 0; }
+
+/* ---------- landing: footer flavor line ---------- */
+.landing-footer {
+  text-align: center;
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  letter-spacing: .02em;
+  margin: 18px 0 0;
+}
+
 /* ---------- scrollbars (subtle) ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 6px; }

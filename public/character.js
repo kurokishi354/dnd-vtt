@@ -601,7 +601,7 @@ function renderCompanions() {
       <button type="button" class="companion-remove" title="Hapus companion">×</button>
       <div class="companion-card-title">🐾 ${escapeAttrVal(c.nama || 'Companion')} <span class="hint">${escapeAttrVal(c.tipe || '')}</span></div>
       <div class="row">
-        <div class="field"><label>Nama</label><input type="text" data-cf="nama" value="${escapeAttrVal(c.nama)}"></div>
+        <div class="field"><label>Nama</label><input type="text" data-cf="nama" value="${escapeAttrVal(c.nama)}" ${c.fromDM?'readonly':''}></div>
         <div class="field"><label>Tipe / Ras</label><input type="text" data-cf="tipe" value="${escapeAttrVal(c.tipe)}"></div>
         <div class="field" style="max-width:70px;"><label>Level</label><input type="text" data-cf="level" value="${escapeAttrVal(c.level)}" ${c.fromDM?'readonly':''}></div>
       </div>
@@ -1662,6 +1662,7 @@ function renderDiceLog() {
     else cls = 'player';
     return `<div class="entry ${cls}${e.secret?' secret':''}">
       <span class="from">${pEscapeHtml(e.from)}:</span> ${pEscapeHtml(e.text)}
+      ${e.imageUrl?`<div><img src="${e.imageUrl}" style="max-width:180px; border-radius:5px; border:1px solid var(--gold); margin-top:4px;"></div>`:''}
       ${e.secret?`<span class="secret-badge">🔒 rahasia</span>`:''}
       ${e.ts?`<span class="ts">${new Date(e.ts).toLocaleTimeString()}</span>`:''}
     </div>`;
@@ -1775,9 +1776,6 @@ document.getElementById('pDiceQuickRow').querySelectorAll('.dice-btn').forEach(b
 });
 
 document.getElementById('btnPRollDice').addEventListener('click', () => { rollAndSendP(val('pDiceFormula').trim() || '1d20'); });
-document.getElementById('btnClearDiceLog').addEventListener('click', () => {
-  if (confirm('Bersihkan seluruh log chat & dice untuk semua orang di sesi ini?')) socket.emit('chat:clear', { code: CODE });
-});
 document.getElementById('btnPSendChat').addEventListener('click', sendPChat);
 document.getElementById('pChatInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendPChat(); });
 

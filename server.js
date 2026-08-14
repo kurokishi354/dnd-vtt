@@ -1833,6 +1833,7 @@ io.on('connection', (socket) => {
   socket.on('chat:clear', ({ code }) => {
     const session = sessions[code];
     if (!session) return;
+    if (socket.data.role !== 'dm') return;
     session.log = [];
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('chat:cleared');

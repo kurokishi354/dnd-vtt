@@ -8,37 +8,51 @@
 </head>
 <body>
 <div class="landing">
-  <div class="card sheet">
-    <h1 class="display" style="text-align:center; color:var(--navy); font-size:26px; margin-bottom:4px;">⚔ DnD VTT ⚔</h1>
-    <p class="hint serif" style="text-align:center; font-size:14px; margin-bottom:18px;">Character sheet &amp; virtual tabletop lokal</p>
+  <div class="card sheet landing-sheet">
+    <div class="landing-header">
+      <h1 class="display landing-title">DnD VTT</h1>
+      <div class="rpg-divider"><span>⚔</span></div>
+      <p class="hint serif landing-subtitle">Character sheet &amp; virtual tabletop lokal</p>
+    </div>
 
     <div id="roleChoice">
-      <div class="choice">
-        <button id="btnBeDM">Aku Dungeon Master</button>
-        <button id="btnBePlayer" class="secondary">Aku Player</button>
+      <div class="role-tiles">
+        <button type="button" id="btnBeDM" class="role-tile role-tile-dm">
+          <span class="role-tile-icon">🐉</span>
+          <span class="role-tile-title">Dungeon Master</span>
+          <span class="role-tile-desc">Buka &amp; kendalikan sesi, ceritakan dunianya</span>
+        </button>
+        <button type="button" id="btnBePlayer" class="role-tile role-tile-player">
+          <span class="role-tile-icon">🛡</span>
+          <span class="role-tile-title">Player</span>
+          <span class="role-tile-desc">Gabung sesi &amp; mainkan karaktermu</span>
+        </button>
       </div>
     </div>
 
     <!-- ==== DM FLOW ==== -->
-    <div id="dmFlow" style="display:none; margin-top:16px;">
+    <div id="dmFlow" class="landing-flow" style="display:none;">
+      <p class="landing-flow-title">🐉 Dungeon Master</p>
       <div class="field">
         <label for="dmName">Nama DM</label>
         <input type="text" id="dmName" placeholder="cth. Kak Rio">
       </div>
       <button id="btnCreateSession" style="width:100%;">Buat Sesi Baru</button>
 
-      <p class="hint" style="text-align:center; margin: 10px 0;">— atau lanjutkan sesi yang sudah ada —</p>
+      <div class="rpg-divider"><span>atau lanjutkan sesi</span></div>
+
       <div class="field">
         <label for="dmRejoinCode">Kode Sesi</label>
         <input type="text" id="dmRejoinCode" maxlength="5" placeholder="cth. K7X2P" style="text-transform:uppercase;">
       </div>
       <button id="btnRejoinSession" class="secondary" style="width:100%;">Lanjutkan Sesi</button>
       <p class="error-msg" id="dmError"></p>
-      <button id="btnBackFromDM" class="secondary small" style="margin-top:12px;">&larr; kembali</button>
+      <button id="btnBackFromDM" class="secondary small landing-back">&larr; kembali</button>
     </div>
 
     <!-- ==== PLAYER FLOW ==== -->
-    <div id="playerFlow" style="display:none; margin-top:16px;">
+    <div id="playerFlow" class="landing-flow" style="display:none;">
+      <p class="landing-flow-title">🛡 Player</p>
       <div class="field">
         <label for="pName">Nama Kamu</label>
         <input type="text" id="pName" placeholder="cth. Arwen">
@@ -49,8 +63,10 @@
       </div>
       <button id="btnJoinSession" style="width:100%;">Gabung Sesi</button>
       <p class="error-msg" id="pError"></p>
-      <button id="btnBackFromPlayer" class="secondary small" style="margin-top:12px;">&larr; kembali</button>
+      <button id="btnBackFromPlayer" class="secondary small landing-back">&larr; kembali</button>
     </div>
+
+    <p class="landing-footer">✦ Kisah dimulai begitu kau melangkah masuk ✦</p>
   </div>
 </div>
 
