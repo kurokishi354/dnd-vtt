@@ -1107,10 +1107,11 @@ document.getElementById('btnDmActionRoll').onclick = () => {
       }
       const elemTag = elemPct ? ` [${elementType} ${elemPct > 0 ? '+' : ''}${elemPct}%]` : '';
       if (res.aoe) {
-        const summary = (res.results||[]).map(r=>`${r.entryName}: ${r.roll.total}`).join(', ');
+        const summary = (res.results||[]).map(r=>`${r.entryName}${r.hit?(r.hit.result==='miss'?' (meleset)':r.hit.crit?' (CRIT!)':''):''}: ${r.roll.total}`).join(', ');
         status.textContent = `💥 ${actorEntry.name} → ${formula} (AoE ke ${res.results.length} target): ${summary}.`;
       } else {
-        status.textContent = `✓ ${actorEntry.name} → ${formula} = ${res.roll.total}.${elemTag}`;
+        const hitTxt = res.hit ? (res.hit.result === 'miss' ? ' — ❌ Meleset!' : res.hit.crit ? ' — 💢 Critical Hit!' : ' — 🎯 Kena!') : '';
+        status.textContent = `✓ ${actorEntry.name} → ${formula} = ${res.roll.total}.${hitTxt}${elemTag}`;
       }
       document.getElementById('dmActionFormula').value = '';
       document.getElementById('dmActionSkill').value = '';
@@ -1342,7 +1343,9 @@ const SHOP_EFEK_TIPES = [
   ['buff','🌀 Buff'],
   ['debuff','🌀 Debuff'],
   ['cure','✨ Cure Status (hapus kondisi)'],
-  ['revive','⚕ Revive (hapus fatal + heal)']
+  ['revive','⚕ Revive (hapus fatal + heal)'],
+  ['food','🍖 Makanan (isi Lapar)'],
+  ['drink','💧 Minuman (isi Haus)']
 ];
 const SHOP_EFEK_LABEL = Object.fromEntries(SHOP_EFEK_TIPES);
 (function initShopEfekSelect(){
@@ -1424,7 +1427,7 @@ document.getElementById('shopImportFile').addEventListener('change', (e)=>{
         };
         if(item.nama) socket.emit('dm:shop-save-item',{code:CODE,item});
       });
-      alert(`${rows.length} item berhasil diimport. Kolom efek opsional: efekTipe (misc/heal/damage/buff/debuff/cure/revive/mana_regen/sp_regen), efekFormula (mis. 2d4+2), aoe (true/false).`);
+      alert(`${rows.length} item berhasil diimport. Kolom efek opsional: efekTipe (misc/heal/damage/buff/debuff/cure/revive/mana_regen/sp_regen/food/drink), efekFormula (mis. 2d4+2, atau angka flat utk food/drink), aoe (true/false).`);
     }catch(err){alert('Gagal import: '+err.message);}
     e.target.value='';
   };

@@ -846,6 +846,28 @@ function updateHpBar() {
   setResourceBar('spBar', 'f_sp_current', 'f_sp_max');
   setResourceBar('hungerBar', 'f_hunger', 'f_hunger_max');
   setResourceBar('thirstBar', 'f_thirst', 'f_thirst_max');
+  updateSurvivalDebuffWarning();
+}
+
+// Lapar/haus di bawah 50% -> tampilkan peringatan kalau aksi battle-nya bakal kena potongan efektivitas
+// (dihitung ulang di server, ini cuma indikator visual di sheet).
+function updateSurvivalDebuffWarning() {
+  const warn = document.getElementById('survivalDebuffWarning');
+  if (!warn) return;
+  const hMax = parseInt(val('f_hunger_max'), 10) || 100;
+  const hCur = parseInt(val('f_hunger'), 10) || 0;
+  const tMax = parseInt(val('f_thirst_max'), 10) || 100;
+  const tCur = parseInt(val('f_thirst'), 10) || 0;
+  const labels = [];
+  if (hCur / hMax < 0.5) labels.push('Kelaparan');
+  if (tCur / tMax < 0.5) labels.push('Kehausan');
+  if (labels.length) {
+    warn.style.display = '';
+    warn.textContent = `⚠ ${labels.join(' & ')} — aksi battle-mu (damage/heal/akurasi) berkurang sampai kamu makan/minum.`;
+  } else {
+    warn.style.display = 'none';
+    warn.textContent = '';
+  }
 }
 function setResourceBar(barId, curId, maxId) {
   const bar = document.getElementById(barId);
@@ -1653,18 +1675,21 @@ document.getElementById('btnPActionRoll').addEventListener('click', () => {
   const elementType = val('pDmgElement');
   const elemPct = elementType ? (parseFloat(val(`ct_${elementType}`)) || 0) : 0;
   let atkNote = '';
+  let toHitBonus = 0;
   if (actionType === 'damage' || actionType === 'ultimate') {
     const atkMod = computeBuffTotals().atk;
     if (atkMod) { formula = `${formula}${atkMod>0?'+':''}${atkMod}`; atkNote = ` (ATK ${fmtMod(atkMod)} otomatis ditambahkan)`; }
+    toHitBonus = Math.floor(atkMod / 2);
   }
-  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName, elementType, elemBonus: elemPct }, (res) => {
+  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName, elementType, elemBonus: elemPct, toHitBonus }, (res) => {
     const status = document.getElementById('pActionStatus');
     if (res && res.ok) {
       if (res.aoe) {
-        const summary = (res.results||[]).map(r => `${r.entryName}: ${r.roll.total}`).join(', ');
+        const summary = (res.results||[]).map(r => `${r.entryName}${r.hit?(r.hit.result==='miss'?' (meleset)':r.hit.crit?' (CRIT!)':''):''}: ${r.roll.total}`).join(', ');
         status.textContent = `💥 AoE ${formula} diterapkan ke ${res.results.length} target — ${summary}.${atkNote}`;
       } else {
-        status.textContent = `✓ ${formula} = ${res.roll.total} diterapkan.${atkNote}${elemPct?' ('+elementType+' '+fmtMod(elemPct)+'%)':''}`;
+        const hitTxt = res.hit ? (res.hit.result === 'miss' ? ' — ❌ Meleset!' : res.hit.crit ? ' — 💢 Critical Hit!' : ' — 🎯 Kena!') : '';
+        status.textContent = `✓ ${formula} = ${res.roll.total} diterapkan.${hitTxt}${atkNote}${elemPct?' ('+elementType+' '+fmtMod(elemPct)+'%)':''}`;
       }
       document.getElementById('pActionFormula').value = '';
     } else { status.textContent = res && res.error ? res.error : 'Gagal menerapkan aksi.'; }

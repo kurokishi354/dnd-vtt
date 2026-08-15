@@ -141,6 +141,25 @@ function blankSurvival() {
   return { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
 }
 
+// Lapar/haus di bawah 50% -> pelemahan tempur. Dihitung dari sheet player (bukan battle entry),
+// jadi berlaku baik dia jadi actor (aksinya kurang efektif) maupun buat indikator status di UI.
+const SURVIVAL_DEBUFF_RATIO = 0.5; // ambang batas 50%
+const SURVIVAL_DEBUFF_PCT_PER_STACK = 0.15; // tiap kondisi lemah (lapar ATAU haus) motong 15% efektivitas aksi
+function survivalDebuffInfo(session, playerId) {
+  const empty = { labels: [], count: 0 };
+  if (!playerId || !session.players[playerId]) return empty;
+  const surv = session.players[playerId].sheet.survival;
+  if (!surv) return empty;
+  const labels = [];
+  const hMax = parseFloat(surv.hunger_max) || 100;
+  const tMax = parseFloat(surv.thirst_max) || 100;
+  const hCur = parseFloat(surv.hunger) || 0;
+  const tCur = parseFloat(surv.thirst) || 0;
+  if (hMax > 0 && hCur / hMax < SURVIVAL_DEBUFF_RATIO) labels.push('Kelaparan');
+  if (tMax > 0 && tCur / tMax < SURVIVAL_DEBUFF_RATIO) labels.push('Kehausan');
+  return { labels, count: labels.length };
+}
+
 // Deteksi link YouTube (watch, youtu.be, shorts, embed) dan ambil video ID-nya.
 function extractYoutubeId(url) {
   if (!url) return null;
@@ -298,19 +317,33 @@ function sortedBattleList(session) {
   });
 }
 
+// Kondisi "fatal" = karakter gak bisa bertindak sama sekali giliran itu (kaya RPG pada umumnya:
+// Stunned/Frozen/Sleep/Paralyzed), jadi battleAdvance otomatis melompati mereka.
+const FATAL_CONDITIONS = ['Stunned', 'Frozen', 'Sleep', 'Paralyzed'];
 function battleAdvance(session, dir) {
   const list = sortedBattleList(session);
-  if (!list.length) return;
+  if (!list.length) return { skipped: [] };
   const turn = session.battle.turn;
   let idx = list.findIndex(e => e.id === turn.activeId);
   if (idx === -1) {
     // belum ada giliran aktif (atau entri sebelumnya sudah dihapus) -> mulai dari awal/akhir
     idx = dir > 0 ? -1 : list.length;
   }
-  idx += dir;
-  if (idx >= list.length) { idx = 0; turn.round += 1; }
-  if (idx < 0) { idx = list.length - 1; turn.round = Math.max(1, turn.round - 1); }
+  const skipped = [];
+  for (let i = 0; i < list.length; i++) {
+    idx += dir;
+    if (idx >= list.length) { idx = 0; turn.round += 1; }
+    if (idx < 0) { idx = list.length - 1; turn.round = Math.max(1, turn.round - 1); }
+    const candidate = list[idx];
+    const isFatal = Array.isArray(candidate.conditions) && candidate.conditions.some(c => FATAL_CONDITIONS.includes(c));
+    // Kalau semua peserta lain juga fatal (i sudah di iterasi terakhir), tetap jatuhkan giliran ke dia
+    // biar battle gak macet total.
+    if (isFatal && i < list.length - 1) { skipped.push(candidate.name); continue; }
+    turn.activeId = candidate.id;
+    return { skipped };
+  }
   turn.activeId = list[idx].id;
+  return { skipped };
 }
 
 function publicPlayerList(session) {
@@ -541,6 +574,19 @@ function applyDotBuffsToEntry(session, entry, buffs, displayName) {
     if (tp.socketId) io.to(tp.socketId).emit('your-sheet-updated', { sheet: tp.sheet });
     io.to('dm-' + session.code).emit('sheet-updated', { playerId: tp.id, sheet: tp.sheet });
   }
+}
+
+// Umumkan di log kalau ada peserta yang gilirannya dilewati otomatis karena kondisi fatal
+// (Stunned/Frozen/Sleep/Paralyzed).
+function logSkippedTurns(session, code, names) {
+  const logEntry = {
+    id: genId('log'), from: 'Sistem',
+    text: `💫 ${names.join(', ')} tidak bisa bertindak (Stunned/Frozen/Sleep/Paralyzed) — giliran dilewati.`,
+    type: 'system', ts: Date.now(), secret: false
+  };
+  session.log.push(logEntry);
+  if (session.log.length > 300) session.log.shift();
+  io.to('room-' + code).emit('chat:new', logEntry);
 }
 
 // Setiap round battle maju/mundur, kurangi (atau kembalikan) "Sisa Giliran" tiap buff/debuff yang
@@ -1394,8 +1440,9 @@ io.on('connection', (socket) => {
     const session = sessions[code];
     if (!session) return;
     const roundBefore = session.battle.turn.round;
-    battleAdvance(session, 1);
+    const { skipped } = battleAdvance(session, 1);
     tickBuffDurations(session, session.battle.turn.round - roundBefore);
+    if (skipped.length) logSkippedTurns(session, code, skipped);
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
   });
@@ -1404,8 +1451,9 @@ io.on('connection', (socket) => {
     const session = sessions[code];
     if (!session) return;
     const roundBefore = session.battle.turn.round;
-    battleAdvance(session, -1);
+    const { skipped } = battleAdvance(session, -1);
     tickBuffDurations(session, session.battle.turn.round - roundBefore);
+    if (skipped.length) logSkippedTurns(session, code, skipped);
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
   });
@@ -1416,15 +1464,25 @@ io.on('connection', (socket) => {
   // Terapkan 1 aksi (damage/heal/buff/dll) ke 1 entry battle. Dipakai baik utk single target
   // maupun dipanggil berulang per-entry pas AoE. Gak ngirim socket event apa pun di sini —
   // biar caller yang atur emit-nya sekali aja setelah semua target selesai diproses.
-  function applyActionToEntry(session, code, entry, { actionType, formula, actor, note, elementType, elemBonus }) {
+  function applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, note, elementType, elemBonus, toHitBonus }) {
     const map = BATTLE_ACTION_MAP[actionType];
     const roll = rollFormulaServer(formula);
     const label = BATTLE_ACTION_LABEL[actionType] || actionType;
-    const noteSuffix = note ? ' — ' + note : '';
+    let noteSuffix = note ? ' — ' + note : '';
+    const isAttack = actionType === 'damage' || actionType === 'ultimate';
+
+    // Lapar/haus di bawah 50% -> actor jadi lemah, semua aksinya (damage/heal/regen/dll) kurang efektif
+    // dan lebih gampang meleset kalau nyerang. Dicek dari sheet si actor (session.players), bukan target.
+    const survival = survivalDebuffInfo(session, actorId);
+    let survivalMult = 1;
+    if (survival.count) {
+      survivalMult = Math.max(0.4, 1 - SURVIVAL_DEBUFF_PCT_PER_STACK * survival.count);
+      noteSuffix += ` [Lemah: ${survival.labels.join(' & ')} −${Math.round((1 - survivalMult) * 100)}%]`;
+    }
 
     let elemModifier = 0;
     let elemNote = '';
-    if (elementType && (actionType === 'damage' || actionType === 'ultimate')) {
+    if (elementType && isAttack) {
       const actorElemPct = parseFloat(elemBonus) || 0;
       let targetElemPct = 0;
       if (entry.refType === 'player' && session.players[entry.refId]) {
@@ -1441,12 +1499,37 @@ io.on('connection', (socket) => {
     }
 
     let defReduction = 0;
-    if ((actionType === 'damage' || actionType === 'ultimate') && entry.refType === 'player') {
+    if (isAttack && entry.refType === 'player') {
       const targetPlayer = session.players[entry.refId];
       const defTotal = targetPlayer ? sumBuffStat(targetPlayer.sheet && targetPlayer.sheet.buffs, 'def') : 0;
       if (defTotal) defReduction = Math.max(0, Math.min(roll.total + elemModifier, defTotal));
     }
-    const effectiveTotal = Math.max(0, roll.total + elemModifier - defReduction);
+
+    // === To-hit roll ala RPG: d20 vs AC target. Natural 1 = auto-meleset, natural 20 = critical hit
+    // (damage x2). Lapar/haus juga bikin akurasi turun (-1 per kondisi lemah yang aktif). ===
+    let hitInfo = null, hitNote = '';
+    if (isAttack) {
+      const d20 = 1 + Math.floor(Math.random() * 20);
+      const targetAC = parseFloat(entry.ac);
+      const ac = isNaN(targetAC) ? 10 : targetAC;
+      const bonus = (parseFloat(toHitBonus) || 0) - survival.count;
+      if (d20 === 1) hitInfo = { result: 'miss', crit: false, d20, ac };
+      else if (d20 === 20) hitInfo = { result: 'hit', crit: true, d20, ac };
+      else if (d20 + bonus >= ac) hitInfo = { result: 'hit', crit: false, d20, ac };
+      else hitInfo = { result: 'miss', crit: false, d20, ac };
+      hitNote = hitInfo.result === 'miss'
+        ? ` — ❌ MELESET! (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`
+        : hitInfo.crit
+          ? ` — 💢 CRITICAL HIT! (d20=${hitInfo.d20})`
+          : ` — 🎯 Kena (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`;
+    }
+
+    let effectiveTotal = Math.max(0, roll.total + elemModifier - defReduction);
+    effectiveTotal = Math.round(effectiveTotal * survivalMult);
+    if (hitInfo) {
+      if (hitInfo.result === 'miss') effectiveTotal = 0;
+      else if (hitInfo.crit) effectiveTotal = effectiveTotal * 2;
+    }
     const defNote = defReduction ? ` (DEF -${defReduction})` : '';
 
     let resultText, logType = 'roll', next = null;
@@ -1474,27 +1557,30 @@ io.on('connection', (socket) => {
       }
 
       const maxLabel = map.maxField && entry[map.maxField] !== '' ? '/' + entry[map.maxField] : '';
-      resultText = `${actor} pakai ${label} ke ${entry.name}: ${formula || '-'} = ${roll.total} (${roll.detail})${elemNote}${defNote} → ${entry.name} jadi ${next}${maxLabel}${noteSuffix}`;
-      logType = (actionType === 'damage' || actionType === 'ultimate') ? 'damage' : (actionType === 'heal' ? 'heal' : 'roll');
+      resultText = `${actor} pakai ${label} ke ${entry.name}${hitNote}: ${formula || '-'} = ${roll.total} (${roll.detail})${elemNote}${defNote} → ${entry.name} jadi ${next}${maxLabel}${noteSuffix}`;
+      logType = isAttack ? 'damage' : (actionType === 'heal' ? 'heal' : 'roll');
     } else {
       resultText = `${actor} pakai ${label} ke ${entry.name}: ${formula || '-'} = ${roll.total} (${roll.detail})${noteSuffix}`;
     }
 
-    return { entryId: entry.id, entryName: entry.name, resultText, logType, next, roll: { ...roll, total: effectiveTotal } };
+    return { entryId: entry.id, entryName: entry.name, resultText, logType, next, hit: hitInfo, roll: { ...roll, total: effectiveTotal } };
   }
 
-  socket.on('battle:roll-action', ({ code, targetId, actionType, formula, actorName, note, elementType, elemBonus }, cb) => {
+  socket.on('battle:roll-action', ({ code, targetId, actionType, formula, actorName, note, elementType, elemBonus, toHitBonus }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
     const targetIds = resolveTargetIds(session, targetId);
     if (!targetIds.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan (AoE: belum ada peserta yang cocok).' });
     const aoeGroup = aoeGroupFromTargetId(targetId);
     const actor = actorName || (socket.data.role === 'dm' ? 'DM' : 'Player');
+    // actorId diambil dari sesi socket (bukan payload client) biar gak bisa dipalsukan buat ngehindarin
+    // debuff lapar/haus sendiri.
+    const actorId = socket.data.role === 'player' ? socket.data.playerId : null;
 
     const results = targetIds
       .map(tid => session.battle.entries[tid])
       .filter(Boolean)
-      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, note, elementType, elemBonus }));
+      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, note, elementType, elemBonus, toHitBonus }));
     if (!results.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
 
     saveSessionsDebounced(code);
@@ -1521,9 +1607,10 @@ io.on('connection', (socket) => {
     cb && cb({
       ok: true,
       aoe: !!aoeGroup,
-      results: results.map(r => ({ entryId: r.entryId, entryName: r.entryName, roll: r.roll, next: r.next })),
+      results: results.map(r => ({ entryId: r.entryId, entryName: r.entryName, roll: r.roll, next: r.next, hit: r.hit })),
       entry: session.battle.entries[targetIds[0]],
-      roll: results[0].roll
+      roll: results[0].roll,
+      hit: results[0].hit
     });
   });
 
