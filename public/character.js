@@ -372,12 +372,18 @@ function renderGears() {
     const key = wrap.dataset.gear;
     const g = gearState.find(x => x.key === key);
     wrap.querySelectorAll('[data-gf]').forEach(el => {
-      const ev = () => {
-        const f = el.dataset.gf;
+      const f = el.dataset.gf;
+      // 'input' (tiap keystroke) cuma update data, GAK render ulang — biar fokus gak ke-reset
+      // pas lagi ngetik. Render ulang (buat update tampilan "✓ Aktif" & total buff) baru jalan
+      // pas 'change' (blur / toggle checkbox / ganti dropdown), bukan tiap huruf.
+      el.addEventListener('input', () => {
+        g[f] = f === 'equipped' ? el.checked : el.value;
+        scheduleSave();
+      });
+      el.addEventListener('change', () => {
         g[f] = f === 'equipped' ? el.checked : el.value;
         renderGears(); renderBuffTotalsSummary(document.getElementById('buffTotalsSheet')); renderBattleStatus(); scheduleSave();
-      };
-      el.addEventListener('input', ev); el.addEventListener('change', ev);
+      });
     });
   });
 }
@@ -440,14 +446,19 @@ function renderRaceTraits() {
   box.querySelectorAll('[data-rt]').forEach(wrap => {
     const i = parseInt(wrap.dataset.rt, 10);
     wrap.querySelectorAll('[data-rf]').forEach(el => {
-      const ev = () => {
+      // Sama kaya Gear: 'input' cuma update data (gak render ulang, biar fokus gak ke-reset
+      // pas ngetik), render ulang penuh baru jalan pas 'change' (blur / ganti dropdown).
+      el.addEventListener('input', () => {
+        raceTraitState[i][el.dataset.rf] = el.value;
+        scheduleSave();
+      });
+      el.addEventListener('change', () => {
         raceTraitState[i][el.dataset.rf] = el.value;
         renderRaceTraits();
         renderBuffTotalsSummary(document.getElementById('buffTotalsSheet'));
         renderBattleStatus();
         scheduleSave();
-      };
-      el.addEventListener('input', ev); el.addEventListener('change', ev);
+      });
     });
   });
 }
@@ -656,7 +667,16 @@ function renderCompanions() {
       <div class="field"><label>Catatan</label><textarea data-cf="catatan" rows="2">${escapeAttrVal(c.catatan)}</textarea></div>
       ${c.fromDM ? '<span class="hint" style="font-size:11px;">📌 Diberikan DM — Nama/Level/HP Max/Skill hanya bisa diubah DM</span>' : ''}`;
     card.querySelectorAll('[data-cf]').forEach(el => {
-      el.addEventListener('input', e => { c[e.target.dataset.cf] = e.target.value; renderCompanions(); scheduleSave(); });
+      // Cuma update data + judul kartu (bukan render ulang SELURUH kartu) pas lagi ngetik,
+      // biar fokus input gak ke-reset tiap 1 huruf. Judul (nama/tipe) di-update langsung di DOM.
+      el.addEventListener('input', e => {
+        c[e.target.dataset.cf] = e.target.value;
+        if (e.target.dataset.cf === 'nama' || e.target.dataset.cf === 'tipe') {
+          const titleEl = card.querySelector('.companion-card-title');
+          if (titleEl) titleEl.innerHTML = `🐾 ${escapeAttrVal(c.nama || 'Companion')} <span class="hint">${escapeAttrVal(c.tipe || '')}</span>`;
+        }
+        scheduleSave();
+      });
     });
     card.querySelector('.companion-remove').addEventListener('click', () => {
       if (!confirm('Hapus companion ini?')) return;
