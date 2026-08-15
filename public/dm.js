@@ -1,7 +1,8 @@
 // dm.js — DM Board logic (v2 rewrite)
 const socket = io();
 const CODE = localStorage.getItem('dnd_dm_code');
-if (!CODE) location.href = '/';
+const DM_NAME = localStorage.getItem('dnd_dm_name');
+if (!CODE || !DM_NAME) location.href = '/';
 
 document.getElementById('codeBadge').textContent = CODE;
 document.getElementById('joinLink').value = location.origin + '/  (kode: ' + CODE + ')';
@@ -53,7 +54,7 @@ document.getElementById('musicSearch').addEventListener('input', renderMusic);
 // =============================== CONNECT ===============================
 socket.on('connect', () => {
   setConn(true);
-  socket.emit('dm:rejoin-session', { code: CODE }, (res) => {
+  socket.emit('dm:rejoin-session', { code: CODE, dmName: DM_NAME }, (res) => {
     if (!res.ok) { alert(res.error || 'Sesi tidak ditemukan.'); location.href = '/'; return; }
     state = res.state;
     state.playersList = state.playersList || Object.values(state.players).map(p => ({ id: p.id, name: p.name, online: !!p.socketId, nama_karakter: p.sheet.nama_karakter, kelas: p.sheet.kelas, lv: p.sheet.lv, current_hp: p.sheet.current_hp, max_hp: p.sheet.max_hp }));
@@ -97,6 +98,8 @@ socket.on('sheet-updated', ({ playerId, sheet }) => {
   if (playerId === openPlayerId) {
     document.getElementById('playerModalBody').innerHTML = renderSheetReadonly(sheet);
     document.getElementById('currentGoldLabel').textContent = sheet.gold || '0';
+    const surv = sheet.survival || { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
+    document.getElementById('currentSurvivalLabel').textContent = `🍖 ${surv.hunger}/${surv.hunger_max} · 💧 ${surv.thirst}/${surv.thirst_max}`;
     const extraSlots = parseInt(sheet.inv_extra_slots, 10) || 0;
     const usedSlots = Array.isArray(sheet.inventory) ? sheet.inventory.length : 0;
     document.getElementById('invSlotLabel').textContent = `${usedSlots}/${INV_BASE_SLOTS_DM + extraSlots}`;
@@ -146,6 +149,7 @@ function renderPlayers() {
         ${bar(sheet.mp_current, sheet.mp_max, 'mp', 'MP')}
         ${bar(sheet.sp_current, sheet.sp_max, 'sp', 'SP')}
       </div>
+      <div class="pc-foot">🍖 ${(sheet.survival&&sheet.survival.hunger) ?? 100}/${(sheet.survival&&sheet.survival.hunger_max) ?? 100} · 💧 ${(sheet.survival&&sheet.survival.thirst) ?? 100}/${(sheet.survival&&sheet.survival.thirst_max) ?? 100}</div>
       ${conds.length ? `<div class="pc-foot">🌀 ${escapeHtml(conds.join(', '))}</div>` : ''}
     </div>`;
   }).join('');
@@ -166,6 +170,10 @@ function openPlayerModal(playerId) {
   document.getElementById('playerModalTitle').textContent = escapeHtml(pData?.nama_karakter || pData?.name || 'Player');
   document.getElementById('giveItem_playerId').value = playerId;
   document.getElementById('currentGoldLabel').textContent = sheet.gold || '0';
+  const surv = sheet.survival || { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
+  document.getElementById('currentSurvivalLabel').textContent = `🍖 ${surv.hunger}/${surv.hunger_max} · 💧 ${surv.thirst}/${surv.thirst_max}`;
+  document.getElementById('setHunger_amount').value = '';
+  document.getElementById('setThirst_amount').value = '';
   document.getElementById('progress_lv').value = sheet.lv || '';
   document.getElementById('progress_exp').value = sheet.exp || '';
   document.getElementById('progress_kelas_exp').value = sheet.kelas_exp || '';
@@ -239,6 +247,25 @@ document.getElementById('btnSetGold').onclick = () => {
     if (res?.ok) document.getElementById('currentGoldLabel').textContent = amount;
   });
 };
+document.getElementById('btnSetSurvival').onclick = () => {
+  const playerId = document.getElementById('giveItem_playerId').value;
+  const hungerRaw = document.getElementById('setHunger_amount').value;
+  const thirstRaw = document.getElementById('setThirst_amount').value;
+  if (hungerRaw === '' && thirstRaw === '') return;
+  socket.emit('dm:set-survival', { code: CODE, playerId, hunger: hungerRaw === '' ? undefined : parseInt(hungerRaw, 10), thirst: thirstRaw === '' ? undefined : parseInt(thirstRaw, 10) }, (res) => {
+    const statusEl = document.getElementById('survivalStatus');
+    if (res?.ok) {
+      statusEl.textContent = '✓ Lapar/haus diperbarui.';
+      document.getElementById('currentSurvivalLabel').textContent = `🍖 ${res.survival.hunger}/${res.survival.hunger_max} · 💧 ${res.survival.thirst}/${res.survival.thirst_max}`;
+    } else {
+      statusEl.textContent = res?.error || 'Gagal.';
+    }
+  });
+};
+document.getElementById('btnSurvivalTick').addEventListener('click', () => {
+  if (!confirm('Waktu berlalu — lapar & haus SEMUA player berkurang 10. Lanjut?')) return;
+  socket.emit('dm:survival-tick', { code: CODE, hungerDelta: -10, thirstDelta: -10 });
+});
 document.getElementById('btnSetProgress').onclick = () => {
   const playerId = document.getElementById('giveItem_playerId').value;
   const lv = document.getElementById('progress_lv').value;
@@ -1200,7 +1227,7 @@ function renderMusic() {
   const box = document.getElementById('musicList');
   box.innerHTML = tracks.length ? tracks.map(t=>`
     <div class="music-item ${t.id===pb.trackId?'playing':''}" data-id="${t.id}">
-      <span class="m-name">${t.id===pb.trackId&&pb.isPlaying?'▶ ':''}${t.type==='youtube'?'▶️ ':''}${escapeHtml(t.name)}</span>
+      <span class="m-name">${t.id===pb.trackId&&pb.isPlaying?'▶ ':''}${t.type==='youtube'?'▶️ ':''}${escapeHtml(t.name)}${t.addedBy ? ` <span class="hint">(dari ${escapeHtml(t.addedBy)})</span>` : ''}</span>
       <button type="button" class="small btn-music-play">Putar</button>
       <button type="button" class="row-remove btn-music-remove" title="Hapus">×</button>
     </div>`).join('') : `<p class="hint">${q ? 'Tidak ada lagu yang cocok.' : 'Belum ada lagu.'}</p>`;
@@ -1516,18 +1543,25 @@ function renderQuestList() {
   const box = document.getElementById('questList'); if (!box) return;
   const quests = Object.values((state.story && state.story.quests) || {}).sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
   if (!quests.length) { box.innerHTML = '<p class="hint">Belum ada quest.</p>'; return; }
-  box.innerHTML = quests.map(q => `
+  box.innerHTML = quests.map(q => {
+    const accepted = Object.values(q.acceptedBy || {});
+    const acceptedLine = accepted.length
+      ? `<div class="quest-card-desc" style="margin-top:4px;">🙋 ${accepted.map(a => `${escapeHtml(a.name)}${a.completed ? ' ✅' : ''}`).join(', ')}</div>`
+      : `<div class="hint" style="margin-top:4px;">Belum ada player yang ambil quest ini.</div>`;
+    return `
     <div class="quest-card" data-id="${q.id}">
       <div class="quest-card-top">
         <span class="quest-card-title">${escapeHtml(q.title)}</span>
         <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
       </div>
       ${q.desc ? `<div class="quest-card-desc">${escapeHtml(q.desc)}</div>` : ''}
+      ${acceptedLine}
       <div class="row">
         <button type="button" class="small secondary quest-edit-btn" data-id="${q.id}" style="flex:1;">✏ Edit</button>
         <button type="button" class="small danger quest-del-btn" data-id="${q.id}" style="flex:1;">🗑 Hapus</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   box.querySelectorAll('.quest-edit-btn').forEach(btn => { btn.onclick = () => loadQuestToForm((state.story.quests||{})[btn.dataset.id]); });
   box.querySelectorAll('.quest-del-btn').forEach(btn => { btn.onclick = () => { if (confirm('Hapus quest ini?')) socket.emit('dm:quest-delete', { code: CODE, questId: btn.dataset.id }); }; });
 }

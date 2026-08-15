@@ -136,6 +136,11 @@ function blankStory() {
   };
 }
 
+// ---------- Survival: hunger & thirst ----------
+function blankSurvival() {
+  return { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
+}
+
 // Deteksi link YouTube (watch, youtu.be, shorts, embed) dan ambil video ID-nya.
 function extractYoutubeId(url) {
   if (!url) return null;
@@ -159,6 +164,8 @@ function ensureSessionDefaults(session) {
   if (!session.story.scene) session.story.scene = blankStory().scene;
   if (!session.story.dialogue) session.story.dialogue = blankStory().dialogue;
   if (!session.story.quests) session.story.quests = {};
+  // Migrasi quest lama (sebelum fitur "ambil quest") biar punya daftar player yang ambil/selesaikan
+  Object.values(session.story.quests).forEach(q => { if (!q.acceptedBy) q.acceptedBy = {}; });
   // Migrasi peta lama (1 map + 1 dict token flat) -> banyak map, tiap map punya token & fog sendiri.
   // Biar bisa DM benar-benar bikin "Map 2", "Map 3" dst (mis. per lantai dungeon) tanpa numpuk token lintas map.
   if (!session.maps) {
@@ -218,6 +225,13 @@ function ensurePlayerDefaults(player) {
   // tapi gak akan bisa nambah lagi dari sisi player kalau udah lewat cap - itu diatur di client + validasi update-sheet)
   if (!Array.isArray(player.sheet.inventory)) player.sheet.inventory = [];
   if (typeof player.sheet.inv_extra_slots !== 'number') player.sheet.inv_extra_slots = parseInt(player.sheet.inv_extra_slots, 10) || 0;
+  // Survival: lapar & haus (data lama sebelum fitur ini otomatis dikasih nilai penuh)
+  if (!player.sheet.survival || typeof player.sheet.survival !== 'object') player.sheet.survival = blankSurvival();
+  ['hunger','hunger_max','thirst','thirst_max'].forEach(k => {
+    if (typeof player.sheet.survival[k] !== 'number' || isNaN(player.sheet.survival[k])) {
+      player.sheet.survival[k] = blankSurvival()[k];
+    }
+  });
   return player;
 }
 
@@ -243,6 +257,7 @@ function blankSheet(name) {
     mp_max: '', mp_current: '', sp_max: '', sp_current: '',
     condition: [],
     condition_other: '',
+    survival: blankSurvival(),
     death_count: [false, false, false],
     goal: '',
     equipment: [
@@ -635,9 +650,16 @@ io.on('connection', (socket) => {
   });
 
   // === DM: reconnect ke sesi yang sudah ada ===
-  socket.on('dm:rejoin-session', ({ code }, cb) => {
+  // Sekarang wajib isi nama DM juga (kayak login biasa: kode + nama), bukan cuma kode doang,
+  // biar orang lain yang cuma nemu/nebak kode sesi gak bisa asal masuk jadi DM.
+  socket.on('dm:rejoin-session', ({ code, dmName }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false, error: 'Kode sesi tidak ditemukan.' });
+    const nameInput = (dmName || '').trim();
+    if (!nameInput) return cb && cb({ ok: false, error: 'Isi nama DM dulu ya.' });
+    if (nameInput.toLowerCase() !== (session.dmName || '').trim().toLowerCase()) {
+      return cb && cb({ ok: false, error: 'Nama DM tidak cocok dengan sesi ini.' });
+    }
     ensureSessionDefaults(session);
     session.dmSocketId = socket.id;
     socket.join('room-' + code);
@@ -911,6 +933,49 @@ io.on('connection', (socket) => {
       io.to(player.socketId).emit('your-sheet-updated', { sheet: player.sheet, note: `DM mengatur ulang gold-mu menjadi ${val}.` });
     }
     cb && cb({ ok: true, gold: val });
+  });
+
+  // === DM: atur hunger/thirst satu player langsung ke angka pasti ===
+  socket.on('dm:set-survival', ({ code, playerId, hunger, thirst }, cb) => {
+    const session = sessions[code];
+    if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    const player = session.players[playerId];
+    ensurePlayerDefaults(player);
+    const s = player.sheet.survival;
+    if (hunger !== undefined && hunger !== null && hunger !== '') {
+      s.hunger = Math.max(0, Math.min(s.hunger_max || 100, parseInt(hunger, 10) || 0));
+    }
+    if (thirst !== undefined && thirst !== null && thirst !== '') {
+      s.thirst = Math.max(0, Math.min(s.thirst_max || 100, parseInt(thirst, 10) || 0));
+    }
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId, sheet: player.sheet });
+    if (player.socketId) {
+      io.to(player.socketId).emit('your-sheet-updated', { sheet: player.sheet, note: `DM mengatur ulang lapar/haus-mu.` });
+    }
+    cb && cb({ ok: true, survival: s });
+  });
+
+  // === DM: "waktu berlalu" — lapar & haus semua player berkurang sekaligus (default -10) ===
+  socket.on('dm:survival-tick', ({ code, hungerDelta, thirstDelta }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return cb && cb({ ok: false });
+    const hd = Number.isFinite(parseInt(hungerDelta, 10)) ? parseInt(hungerDelta, 10) : -10;
+    const td = Number.isFinite(parseInt(thirstDelta, 10)) ? parseInt(thirstDelta, 10) : -10;
+    Object.values(session.players).forEach(p => {
+      ensurePlayerDefaults(p);
+      const s = p.sheet.survival;
+      s.hunger = Math.max(0, Math.min(s.hunger_max || 100, s.hunger + hd));
+      s.thirst = Math.max(0, Math.min(s.thirst_max || 100, s.thirst + td));
+      io.to('dm-' + code).emit('sheet-updated', { playerId: p.id, sheet: p.sheet });
+      if (p.socketId) io.to(p.socketId).emit('your-sheet-updated', { sheet: p.sheet, note: `⏳ Waktu berlalu — kamu jadi lebih lapar & haus.` });
+    });
+    saveSessionsDebounced(code);
+    const logEntry = { id: genId('log'), from: 'Waktu', text: `⏳ Waktu berlalu — semua karakter jadi lebih lapar & haus.`, type: 'narrative', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
   });
 
   // === DM: kasih slot inventory tambahan ke player (di atas 10 slot dasar) ===
@@ -1594,6 +1659,60 @@ io.on('connection', (socket) => {
     io.to('room-' + code).emit('music-updated', session.music.tracks);
   });
 
+  // === Player: nambahin lagu ke playlist bareng (cuma link YouTube, biar gak numpuk file base64 dari banyak orang) ===
+  socket.on('player:music-add', ({ code, name, url }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!url) return cb && cb({ ok: false, error: 'Link kosong.' });
+    const ytId = extractYoutubeId(url);
+    if (!ytId) return cb && cb({ ok: false, error: 'Cuma link YouTube yang didukung ya.' });
+    const player = session.players[socket.data.playerId];
+    if (!player) return cb && cb({ ok: false });
+    const id = genId('mu');
+    session.music.tracks[id] = {
+      id, name: (name || '').trim() || 'Tanpa Judul', url, type: 'youtube', videoId: ytId,
+      addedAt: Date.now(), addedBy: player.name
+    };
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('music-updated', session.music.tracks);
+    const logEntry = { id: genId('log'), from: 'Musik', text: `🎵 ${player.name} menambahkan lagu: ${session.music.tracks[id].name}`, type: 'narrative', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true, id });
+  });
+
+  // === Player: hapus lagu yang dia sendiri tambahkan ===
+  socket.on('player:music-remove', ({ code, id }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return;
+    const track = session.music.tracks[id];
+    if (!track) return;
+    const player = session.players[socket.data.playerId];
+    if (!player || track.addedBy !== player.name) return; // cuma boleh hapus punya sendiri
+    delete session.music.tracks[id];
+    if (session.music.playback.trackId === id) {
+      session.music.playback = { trackId: null, isPlaying: false, startTs: 0, position: 0, volume: session.music.playback.volume, loop: session.music.playback.loop };
+      io.to('room-' + code).emit('music-state', session.music.playback);
+    }
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('music-updated', session.music.tracks);
+  });
+
+  // === Player: putar lagu dari playlist bersama (kayak jukebox — kedengeran ke semua orang) ===
+  socket.on('player:music-play', ({ code, id }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return;
+    if (!session.music.tracks[id]) return;
+    session.music.playback.trackId = id;
+    session.music.playback.position = 0;
+    session.music.playback.isPlaying = true;
+    session.music.playback.startTs = Date.now();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('music-state', session.music.playback);
+  });
+
   socket.on('dm:music-play', ({ code, id }) => {
     const session = sessions[code];
     if (!session || !session.music.tracks[id]) return;
@@ -1732,7 +1851,8 @@ io.on('connection', (socket) => {
     const prevStatus = isExisting ? session.story.quests[id].status : null;
     const q = {
       id, title: quest.title.trim(), desc: (quest.desc || '').trim(),
-      status: quest.status || 'aktif', updatedAt: Date.now()
+      status: quest.status || 'aktif', updatedAt: Date.now(),
+      acceptedBy: isExisting ? (session.story.quests[id].acceptedBy || {}) : {}
     };
     session.story.quests[id] = q;
     let logText = null;
@@ -1761,6 +1881,48 @@ io.on('connection', (socket) => {
     delete session.story.quests[questId];
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('quests-updated', session.story.quests);
+  });
+
+  // === Player: ambil quest (biar quest gak cuma tampil doang, player bisa "commit" ngerjain) ===
+  socket.on('player:quest-accept', ({ code, questId }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    const quest = session.story.quests[questId];
+    if (!quest) return cb && cb({ ok: false, error: 'Quest tidak ditemukan.' });
+    const player = session.players[socket.data.playerId];
+    if (!player) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    if (!quest.acceptedBy) quest.acceptedBy = {};
+    if (quest.acceptedBy[player.id]) return cb && cb({ ok: true }); // udah diambil sebelumnya
+    quest.acceptedBy[player.id] = { name: player.name, acceptedAt: Date.now(), completed: false, completedAt: null };
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+    const logEntry = { id: genId('log'), from: 'Quest', text: `📜 ${player.name} mengambil quest: ${quest.title}`, type: 'quest', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
+  });
+
+  // === Player: tandai quest yang diambil sebagai selesai di sisi dia (menunggu DM ubah status resmi) ===
+  socket.on('player:quest-complete', ({ code, questId }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    const quest = session.story.quests[questId];
+    if (!quest || !quest.acceptedBy || !quest.acceptedBy[socket.data.playerId]) {
+      return cb && cb({ ok: false, error: 'Kamu belum ambil quest ini.' });
+    }
+    const player = session.players[socket.data.playerId];
+    quest.acceptedBy[socket.data.playerId].completed = true;
+    quest.acceptedBy[socket.data.playerId].completedAt = Date.now();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+    const logEntry = { id: genId('log'), from: 'Quest', text: `✅ ${player.name} menyelesaikan bagiannya di quest: ${quest.title} (menunggu konfirmasi DM)`, type: 'quest', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
   });
 
   // === Story: Handout (kirim dokumen/gambar/catatan ke satu atau semua player) ===

@@ -277,6 +277,24 @@
 
         <div class="field" style="margin-top:10px;"><label>Goal / Tujuan</label><textarea id="f_goal" rows="2"></textarea></div>
       </div>
+
+      <div class="panel">
+        <div class="panel-header">🍖 Survival</div>
+        <p class="hint" style="margin-bottom:6px;">Lapar &amp; haus berkurang seiring waktu (diatur DM). Makan/minum item dari inventory buat isi ulang.</p>
+        <div class="row">
+          <div class="field"><label>Lapar</label><input type="number" id="f_hunger" readonly></div>
+          <div class="field"><label>Maks Lapar</label><input type="number" id="f_hunger_max" readonly></div>
+        </div>
+        <div class="mini-bar-wrap hp" style="height:10px; margin-bottom:8px;"><div class="mini-bar-fill" id="hungerBar" style="width:100%;"></div></div>
+        <button type="button" id="btnEat" class="small secondary" style="width:100%; margin-bottom:10px;">🍖 Makan (pakai item Makanan)</button>
+        <div class="row">
+          <div class="field"><label>Haus</label><input type="number" id="f_thirst" readonly></div>
+          <div class="field"><label>Maks Haus</label><input type="number" id="f_thirst_max" readonly></div>
+        </div>
+        <div class="mini-bar-wrap mp" style="height:10px; margin-bottom:8px;"><div class="mini-bar-fill" id="thirstBar" style="width:100%;"></div></div>
+        <button type="button" id="btnDrink" class="small secondary" style="width:100%;">💧 Minum (pakai item Minuman)</button>
+        <p class="hint" id="survivalActionStatus" style="margin-top:6px;"></p>
+      </div>
     </div>
 
     <!-- ===== KOLOM 2: EQUIPMENT + INVENTORY ===== -->
@@ -515,6 +533,18 @@
     <div class="panel">
       <div class="panel-header">📜 Quest / Objective</div>
       <div id="pQuestList"><p class="hint">Belum ada quest.</p></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">🎵 Musik Bareng</div>
+      <p class="hint" style="margin-bottom:6px;">Tambahkan lagu (link YouTube) ke playlist sesi ini — kedengeran ke semua orang.</p>
+      <div class="row" style="margin-bottom:6px;">
+        <input type="text" id="pMusicName" placeholder="Nama lagu" style="flex:1;">
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="text" id="pMusicUrl" placeholder="Link YouTube…" style="flex:1;">
+        <button type="button" id="btnPMusicAdd" class="small">+ Tambah</button>
+      </div>
+      <div id="pMusicList"><p class="hint">Belum ada lagu.</p></div>
     </div>
     <div class="panel">
       <div class="panel-header">⭐ Riwayat Cerita</div>

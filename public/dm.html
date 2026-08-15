@@ -210,6 +210,7 @@
           <option value="level">Urutkan: Level</option>
           <option value="online">Urutkan: Online dulu</option>
         </select>
+        <button type="button" id="btnSurvivalTick" class="small secondary" style="white-space:nowrap;" title="Lapar &amp; haus semua player -10">⏳ Waktu Berlalu</button>
       </div>
       <div id="playerList" class="player-full-grid"><p class="hint">Belum ada pemain yang gabung.</p></div>
     </div>
@@ -660,6 +661,17 @@
         <button id="btnSetGold" class="small secondary" style="white-space:nowrap;">Set Ulang</button>
       </div>
       <p class="hint" id="giveGoldStatus" style="margin-top:4px;"></p>
+    </div>
+
+    <div class="give-item-box">
+      <label style="margin:0;">🍖 Survival Player Ini: <strong id="currentSurvivalLabel">-</strong></label>
+      <p class="hint" style="margin:4px 0;">Set angka lapar/haus langsung (kosongkan yang tidak mau diubah).</p>
+      <div class="row" style="margin-top:4px;">
+        <input type="number" id="setHunger_amount" placeholder="Set Lapar (0-100)" min="0" max="100">
+        <input type="number" id="setThirst_amount" placeholder="Set Haus (0-100)" min="0" max="100">
+        <button id="btnSetSurvival" class="small" style="white-space:nowrap;">Terapkan</button>
+      </div>
+      <p class="hint" id="survivalStatus" style="margin-top:4px;"></p>
     </div>
 
     <div class="give-item-box">

@@ -69,7 +69,9 @@ const INV_ITEM_TYPES = [
   ['buff','🌀 Buff'],
   ['debuff','🌀 Debuff'],
   ['cure','✨ Cure Status (hapus kondisi)'],
-  ['revive','⚕ Revive (hapus fatal + heal)']
+  ['revive','⚕ Revive (hapus fatal + heal)'],
+  ['food','🍖 Makanan (isi Lapar)'],
+  ['drink','💧 Minuman (isi Haus)']
 ];
 const INV_ITEM_TYPE_LABEL = Object.fromEntries(INV_ITEM_TYPES);
 
@@ -299,6 +301,29 @@ document.getElementById('btnAddInvSlot').addEventListener('click', () => {
   invState.push({ checked: false, item: '', desc: '', type: 'misc', qty: 1 });
   renderInventory(); scheduleSave();
 });
+
+// =============================== SURVIVAL (Lapar & Haus) =================
+// Konsumsi item bertipe 'food'/'drink' dari inventory buat isi ulang lapar/haus.
+// Formula item dipakai sebagai jumlah flat (bukan dice roll) — misal isi "30".
+function consumeSurvivalItem(itemType, hungerOrThirstFieldId, maxFieldId, label) {
+  const idx = invState.findIndex(it => it.item && it.type === itemType && !it.checked && (it.qty || 1) > 0);
+  if (idx === -1) {
+    document.getElementById('survivalActionStatus').textContent = `Kamu tidak punya item ${label} di inventory.`;
+    return;
+  }
+  const it = invState[idx];
+  const amount = parseInt(it.formula, 10) || 20;
+  const max = parseInt(val(maxFieldId), 10) || 100;
+  const cur = parseInt(val(hungerOrThirstFieldId), 10) || 0;
+  document.getElementById(hungerOrThirstFieldId).value = Math.max(0, Math.min(max, cur + amount));
+  if ((it.qty || 1) > 1) { it.qty = (it.qty || 1) - 1; } else { it.checked = true; }
+  renderInventory();
+  updateHpBar();
+  document.getElementById('survivalActionStatus').textContent = `✓ Pakai "${it.item}" — ${label} +${amount}.`;
+  scheduleSave();
+}
+document.getElementById('btnEat').addEventListener('click', () => consumeSurvivalItem('food', 'f_hunger', 'f_hunger_max', 'Lapar'));
+document.getElementById('btnDrink').addEventListener('click', () => consumeSurvivalItem('drink', 'f_thirst', 'f_thirst_max', 'Haus'));
 
 // =============================== GEARS (equipment slot ala inventory) ===
 const GEAR_STAT_OPTIONS = [
@@ -819,6 +844,8 @@ function updateHpBar() {
   setResourceBar('hpBar', 'f_current_hp', 'f_max_hp');
   setResourceBar('mpBar', 'f_mp_current', 'f_mp_max');
   setResourceBar('spBar', 'f_sp_current', 'f_sp_max');
+  setResourceBar('hungerBar', 'f_hunger', 'f_hunger_max');
+  setResourceBar('thirstBar', 'f_thirst', 'f_thirst_max');
 }
 function setResourceBar(barId, curId, maxId) {
   const bar = document.getElementById(barId);
@@ -856,6 +883,11 @@ function fillForm(sheet) {
   document.getElementById('f_mp_current').value = sheet.mp_current || '';
   document.getElementById('f_sp_max').value = sheet.sp_max || '';
   document.getElementById('f_sp_current').value = sheet.sp_current || '';
+  const surv = sheet.survival || { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
+  document.getElementById('f_hunger').value = surv.hunger ?? 100;
+  document.getElementById('f_hunger_max').value = surv.hunger_max ?? 100;
+  document.getElementById('f_thirst').value = surv.thirst ?? 100;
+  document.getElementById('f_thirst_max').value = surv.thirst_max ?? 100;
   updateHpBar();
 
   document.querySelectorAll('.cond-box').forEach(cb => { cb.checked = (sheet.condition || []).includes(cb.value); });
@@ -961,6 +993,10 @@ function readForm() {
     ac: val('f_ac'), initiative: val('f_initiative'),
     max_hp: val('f_max_hp'), current_hp: val('f_current_hp'), temp_hp: val('f_temp_hp'),
     mp_max: val('f_mp_max'), mp_current: val('f_mp_current'), sp_max: val('f_sp_max'), sp_current: val('f_sp_current'),
+    survival: {
+      hunger: parseInt(val('f_hunger'), 10) || 0, hunger_max: parseInt(val('f_hunger_max'), 10) || 100,
+      thirst: parseInt(val('f_thirst'), 10) || 0, thirst_max: parseInt(val('f_thirst_max'), 10) || 100
+    },
     death_count: [0,1,2].map(i => document.querySelector(`.death-box[data-i="${i}"]`).checked),
     goal: val('f_goal'),
     equipment: [0,1].map(i => ({
@@ -1077,7 +1113,7 @@ socket.on('connect', () => {
     onlinePlayersList = res.state.playersList || [];
     shopItems = (res.state.shop && res.state.shop.items) || {};
     storyState = res.state.story || storyState;
-    renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderOnlinePlayers(); renderShopList();
+    renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderPMusicList(); renderOnlinePlayers(); renderShopList();
     renderSceneBanner(); renderDialogueBox(); renderStoryPlayer();
   });
 });
@@ -1727,14 +1763,36 @@ function renderPlayerQuestList() {
   const box = document.getElementById('pQuestList'); if (!box) return;
   const quests = Object.values((storyState && storyState.quests) || {}).sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
   if (!quests.length) { box.innerHTML = '<p class="hint">Belum ada quest.</p>'; return; }
-  box.innerHTML = quests.map(q => `
+  box.innerHTML = quests.map(q => {
+    const mine = (q.acceptedBy || {})[PLAYER_ID];
+    let actionHtml;
+    if (!mine) {
+      actionHtml = `<button type="button" class="small quest-accept-btn" data-id="${q.id}" style="width:100%; margin-top:6px;">🙋 Ambil Quest</button>`;
+    } else if (!mine.completed) {
+      actionHtml = `<button type="button" class="small secondary quest-complete-btn" data-id="${q.id}" style="width:100%; margin-top:6px;">✅ Tandai Selesai</button>`;
+    } else {
+      actionHtml = `<p class="hint" style="margin-top:6px;">✅ Kamu sudah menandai quest ini selesai — menunggu konfirmasi DM.</p>`;
+    }
+    return `
     <div class="quest-card">
       <div class="quest-card-top">
         <span class="quest-card-title">${pEscapeHtml(q.title)}</span>
         <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
       </div>
       ${q.desc ? `<div class="quest-card-desc">${pEscapeHtml(q.desc)}</div>` : ''}
-    </div>`).join('');
+      ${actionHtml}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.quest-accept-btn').forEach(btn => {
+    btn.onclick = () => socket.emit('player:quest-accept', { code: CODE, questId: btn.dataset.id }, (res) => {
+      if (!res || !res.ok) alert((res && res.error) || 'Gagal ambil quest.');
+    });
+  });
+  box.querySelectorAll('.quest-complete-btn').forEach(btn => {
+    btn.onclick = () => socket.emit('player:quest-complete', { code: CODE, questId: btn.dataset.id }, (res) => {
+      if (!res || !res.ok) alert((res && res.error) || 'Gagal menandai quest selesai.');
+    });
+  });
 }
 socket.on('quests-updated', (quests) => {
   storyState.quests = quests;
@@ -1807,8 +1865,35 @@ function rollAndSendP(formula) {
 }
 
 // =============================== MUSIK ==================================
-socket.on('music-updated', (tracks) => { battleState.music.tracks = tracks; syncPlayerMusic(); });
-socket.on('music-state', (playback) => { battleState.music.playback = playback; syncPlayerMusic(); });
+socket.on('music-updated', (tracks) => { battleState.music.tracks = tracks; syncPlayerMusic(); renderPMusicList(); });
+socket.on('music-state', (playback) => { battleState.music.playback = playback; syncPlayerMusic(); renderPMusicList(); });
+
+function renderPMusicList() {
+  const box = document.getElementById('pMusicList'); if (!box) return;
+  const tracks = Object.values((battleState.music && battleState.music.tracks) || {});
+  const pb = (battleState.music && battleState.music.playback) || {};
+  if (!tracks.length) { box.innerHTML = '<p class="hint">Belum ada lagu.</p>'; return; }
+  box.innerHTML = tracks.map(t => `
+    <div class="music-item ${t.id===pb.trackId?'playing':''}" data-id="${t.id}">
+      <span class="m-name">${t.id===pb.trackId&&pb.isPlaying?'▶ ':''}${pEscapeHtml(t.name)}${t.addedBy ? ` <span class="hint">(dari ${pEscapeHtml(t.addedBy)})</span>` : ''}</span>
+      <button type="button" class="small p-music-play">Putar</button>
+      ${t.addedBy === (NAME || '') ? '<button type="button" class="row-remove p-music-remove" title="Hapus lagumu">×</button>' : ''}
+    </div>`).join('');
+  box.querySelectorAll('.p-music-play').forEach(btn => {
+    btn.onclick = () => socket.emit('player:music-play', { code: CODE, id: btn.closest('.music-item').dataset.id });
+  });
+  box.querySelectorAll('.p-music-remove').forEach(btn => {
+    btn.onclick = () => socket.emit('player:music-remove', { code: CODE, id: btn.closest('.music-item').dataset.id });
+  });
+}
+document.getElementById('btnPMusicAdd').addEventListener('click', () => {
+  const url = document.getElementById('pMusicUrl').value.trim(); if (!url) return;
+  const name = document.getElementById('pMusicName').value.trim() || 'Lagu dari URL';
+  socket.emit('player:music-add', { code: CODE, name, url }, (res) => {
+    if (!res || !res.ok) { alert((res && res.error) || 'Gagal nambah lagu.'); return; }
+    document.getElementById('pMusicUrl').value = ''; document.getElementById('pMusicName').value = '';
+  });
+});
 
 const playerMusicPlayer = document.getElementById('playerMusicPlayer');
 let playerMusicUnlocked = false;

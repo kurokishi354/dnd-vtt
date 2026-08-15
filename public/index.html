@@ -42,6 +42,10 @@
       <div class="rpg-divider"><span>atau lanjutkan sesi</span></div>
 
       <div class="field">
+        <label for="dmRejoinName">Nama DM</label>
+        <input type="text" id="dmRejoinName" placeholder="Nama yang dipakai waktu buat sesi ini">
+      </div>
+      <div class="field">
         <label for="dmRejoinCode">Kode Sesi</label>
         <input type="text" id="dmRejoinCode" maxlength="5" placeholder="cth. K7X2P" style="text-transform:uppercase;">
       </div>
@@ -94,11 +98,14 @@ document.getElementById('btnCreateSession').onclick = () => {
 };
 
 document.getElementById('btnRejoinSession').onclick = () => {
+  const dmName = document.getElementById('dmRejoinName').value.trim();
   const code = document.getElementById('dmRejoinCode').value.trim().toUpperCase();
-  if (!code) return;
-  socket.emit('dm:rejoin-session', { code }, (res) => {
+  if (!dmName) { document.getElementById('dmError').textContent = 'Isi nama DM dulu ya.'; return; }
+  if (!code) { document.getElementById('dmError').textContent = 'Isi kode sesi dulu ya.'; return; }
+  socket.emit('dm:rejoin-session', { code, dmName }, (res) => {
     if (!res.ok) { document.getElementById('dmError').textContent = res.error; return; }
     localStorage.setItem('dnd_dm_code', code);
+    localStorage.setItem('dnd_dm_name', dmName);
     location.href = '/dm.html';
   });
 };
@@ -120,6 +127,11 @@ document.getElementById('btnJoinSession').onclick = () => {
 // enter-to-submit
 document.getElementById('pCode').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btnJoinSession').click(); });
 document.getElementById('dmRejoinCode').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btnRejoinSession').click(); });
+document.getElementById('dmRejoinName').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btnRejoinSession').click(); });
+
+// prefill nama DM terakhir biar gak ngetik ulang tiap kali lanjut sesi
+const savedDmName = localStorage.getItem('dnd_dm_name');
+if (savedDmName) document.getElementById('dmRejoinName').value = savedDmName;
 </script>
 </body>
 </html>
