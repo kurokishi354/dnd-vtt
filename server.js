@@ -303,7 +303,7 @@ function blankSheet(name) {
     // AC/HP/MP/SP/ATK/DEF (dihitung bareng gear & buff di client). Sheet lama (array of string,
     // sebelum fitur ini) otomatis dikonversi jadi {nama: string, stat:'', amount:''} di client.
     race_trait: Array.from({ length: 4 }, () => ({ nama: '', stat: '', amount: '' })),
-    class_trait: { fire: '', ice: '', lightning: '', poison: '', dark: '', light: '', physical: '', magic: '' },
+    class_trait: { fire: '', ice: '', lightning: '', wind: '', earth: '', water: '', poison: '', dark: '', light: '', physical: '', magic: '' },
     catatan_lain: ''
   };
 }

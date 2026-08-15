@@ -7,7 +7,7 @@ if (!CODE || !DM_NAME) location.href = '/';
 document.getElementById('codeBadge').textContent = CODE;
 document.getElementById('joinLink').value = location.origin + '/  (kode: ' + CODE + ')';
 
-const ELEMENT_KEYS = ['fire','ice','lightning','poison','dark','light','physical','magic'];
+const ELEMENT_KEYS = ['fire','ice','lightning','wind','earth','water','poison','dark','light','physical','magic'];
 
 let state = {
   players: {}, playersList: [],

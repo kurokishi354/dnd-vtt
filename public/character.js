@@ -39,7 +39,8 @@ const SKILL_ACTION_OPTIONS = [
 ];
 
 const ELEMENT_KEYS = [
-  ['fire','🔥 Fire'],['ice','❄ Ice'],['lightning','⚡ Lightning'],['poison','☠ Poison'],
+  ['fire','🔥 Fire'],['ice','❄ Ice'],['lightning','⚡ Lightning'],['wind','💨 Wind'],
+  ['earth','⛰ Earth'],['water','🌊 Water'],['poison','☠ Poison'],
   ['dark','🌑 Dark'],['light','☀ Light'],['physical','⚔ Physical'],['magic','🔮 Magic']
 ];
 
@@ -302,6 +303,20 @@ document.getElementById('btnAddInvSlot').addEventListener('click', () => {
   renderInventory(); scheduleSave();
 });
 
+// Konsumsi 1 slot inventory dari index tertentu. Kalau qty abis (jadi 0), slot-nya langsung
+// dihapus/hilang dari inventory (bukan cuma dicentang "sudah dipakai") — biar otomatis kosong
+// dan freed-up buat item lain, kaya inventory RPG pada umumnya.
+function consumeInvSlot(idx) {
+  const it = invState[idx];
+  if (!it) return;
+  const remaining = (parseInt(it.qty, 10) || 1) - 1;
+  if (remaining > 0) {
+    it.qty = remaining;
+  } else {
+    invState.splice(idx, 1);
+  }
+}
+
 // =============================== SURVIVAL (Lapar & Haus) =================
 // Konsumsi item bertipe 'food'/'drink' dari inventory buat isi ulang lapar/haus.
 // Formula item dipakai sebagai jumlah flat (bukan dice roll) — misal isi "30".
@@ -316,10 +331,11 @@ function consumeSurvivalItem(itemType, hungerOrThirstFieldId, maxFieldId, label)
   const max = parseInt(val(maxFieldId), 10) || 100;
   const cur = parseInt(val(hungerOrThirstFieldId), 10) || 0;
   document.getElementById(hungerOrThirstFieldId).value = Math.max(0, Math.min(max, cur + amount));
-  if ((it.qty || 1) > 1) { it.qty = (it.qty || 1) - 1; } else { it.checked = true; }
+  const itemName = it.item;
+  consumeInvSlot(idx);
   renderInventory();
   updateHpBar();
-  document.getElementById('survivalActionStatus').textContent = `✓ Pakai "${it.item}" — ${label} +${amount}.`;
+  document.getElementById('survivalActionStatus').textContent = `✓ Pakai "${itemName}" — ${label} +${amount}.`;
   scheduleSave();
 }
 document.getElementById('btnEat').addEventListener('click', () => consumeSurvivalItem('food', 'f_hunger', 'f_hunger_max', 'Lapar'));
@@ -1345,7 +1361,7 @@ function useInventoryInBattle(idx) {
   const status = document.getElementById('pActionStatus');
 
   const consumeItem = () => {
-    if ((it.qty || 1) > 1) { it.qty = (it.qty || 1) - 1; } else { it.checked = true; }
+    consumeInvSlot(idx);
     renderInventory(); renderBattleInventory(); scheduleSave();
   };
 
