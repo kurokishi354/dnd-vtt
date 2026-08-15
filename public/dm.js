@@ -78,6 +78,20 @@ document.getElementById('btnCopyCode').onclick = () => {
   });
 };
 
+// =============================== DARK MODE ===============================
+(function setupThemeToggle() {
+  const btn = document.getElementById('btnThemeToggle');
+  if (!btn) return;
+  const apply = (dark) => {
+    document.documentElement.dataset.theme = dark ? 'dark' : '';
+    btn.textContent = dark ? '☀' : '🌙';
+    try { localStorage.setItem('dnd_vtt_theme', dark ? 'dark' : 'light'); } catch(e){}
+  };
+  apply(document.documentElement.dataset.theme === 'dark');
+  btn.addEventListener('click', () => apply(document.documentElement.dataset.theme !== 'dark'));
+})();
+
+
 // =============================== UTIL ==================================
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -282,6 +296,21 @@ document.getElementById('btnSetUnlockedClasses').onclick = () => {
     document.getElementById('unlockClassStatus').textContent = res?.ok ? '✓ Kelas terbuka disimpan.' : (res?.error || 'Gagal.');
   });
 };
+document.getElementById('btnGiveXp').onclick = () => {
+  const playerId = document.getElementById('giveItem_playerId').value;
+  const amount = parseInt(document.getElementById('giveXp_amount').value, 10);
+  if (!playerId) return alert('Pilih player dulu.');
+  if (isNaN(amount) || amount <= 0) return alert('Isi jumlah XP yang valid.');
+  socket.emit('dm:give-xp', { code: CODE, playerId, amount }, (res) => {
+    const el = document.getElementById('giveXpStatus');
+    if (res && res.ok) {
+      el.textContent = res.leveledUp ? `✓ +${amount} XP — Level Up! Sekarang Level ${res.lv} (total EXP ${res.exp}).` : `✓ +${amount} XP (total EXP ${res.exp}, Level ${res.lv}).`;
+      document.getElementById('giveXp_amount').value = '';
+    } else {
+      el.textContent = (res && res.error) || 'Gagal.';
+    }
+  });
+};
 
 // Give companion to player
 document.getElementById('btnGiveCompanion').onclick = () => {
@@ -457,8 +486,41 @@ function openNpcModal(npc) {
   };
   renderNpcEquipList(); renderNpcInvList();
   renderNpcSkillList('active'); renderNpcSkillList('passive'); renderNpcSkillList('ultimate');
+  renderNpcRelationshipList(npc);
   document.getElementById('btnDeleteNpc').style.display = npc ? 'inline-block' : 'none';
   document.getElementById('npcModal').classList.add('show');
+}
+
+// Relasi/reputasi NPC per player — cuma bisa diatur kalau NPC-nya udah pernah disimpan (punya id),
+// biar gak nyimpen relasi buat NPC yang belum eksis.
+function renderNpcRelationshipList(npc) {
+  const box = document.getElementById('npcRelationshipList');
+  if (!box) return;
+  if (!npc || !npc.id) { box.innerHTML = '<p class="hint">Simpan NPC ini dulu buat bisa atur relasi.</p>'; return; }
+  const players = state.playersList || Object.values(state.players || {});
+  if (!players.length) { box.innerHTML = '<p class="hint">Belum ada player di sesi ini.</p>'; return; }
+  const rel = npc.relationships || {};
+  box.innerHTML = players.map(p => {
+    const r = rel[p.id] || { value: 0, note: '' };
+    return `
+    <div class="row" style="margin:4px 0; gap:6px; align-items:center;">
+      <span style="flex:1; min-width:100px;">${escapeHtml(p.nama_karakter || p.name)}</span>
+      <input type="number" class="npc-rel-value" data-pid="${p.id}" value="${r.value||0}" min="-100" max="100" style="width:70px;" title="-100 s/d 100">
+      <input type="text" class="npc-rel-note" data-pid="${p.id}" value="${escapeAttrVal(r.note||'')}" placeholder="Catatan…" style="flex:2;">
+    </div>`;
+  }).join('') + `<button type="button" id="btnSaveNpcRelationships" class="small secondary" style="width:100%; margin-top:6px;">Simpan Relasi</button>`;
+  document.getElementById('btnSaveNpcRelationships').onclick = () => {
+    const relationships = {};
+    box.querySelectorAll('.npc-rel-value').forEach(inp => {
+      const pid = inp.dataset.pid;
+      const value = parseInt(inp.value, 10) || 0;
+      const note = box.querySelector(`.npc-rel-note[data-pid="${pid}"]`)?.value || '';
+      relationships[pid] = { value, note };
+    });
+    socket.emit('dm:npc-set-relationships', { code: CODE, npcId: npc.id, relationships }, (res) => {
+      if (!res?.ok) alert(res?.error || 'Gagal simpan relasi.');
+    });
+  };
 }
 document.getElementById('btnAddNpc').onclick = () => openNpcModal(null);
 document.getElementById('btnCloseNpcModal').onclick = () => document.getElementById('npcModal').classList.remove('show');
@@ -483,7 +545,8 @@ document.getElementById('btnSaveNpc').onclick = () => {
     sp_current: document.getElementById('npc_sp_current').value,
     skills: document.getElementById('npc_skills').value,
     catatan: document.getElementById('npc_catatan').value,
-    elements, equipment: npcEditEquip, inventory: npcEditInv, skillSet: npcEditSkills
+    elements, equipment: npcEditEquip, inventory: npcEditInv, skillSet: npcEditSkills,
+    relationships: (document.getElementById('npc_id').value && state.npcs[document.getElementById('npc_id').value]?.relationships) || {}
   };
   socket.emit('dm:save-npc', { code: CODE, npc }, (res) => {
     if (res && res.ok) document.getElementById('npcModal').classList.remove('show');
@@ -947,6 +1010,12 @@ function renderEntryBuffsHtml(e) {
 function renderBattle() {
   const turn = (state.battle && state.battle.turn) || { activeId: null, round: 1 };
   document.getElementById('roundBadge').textContent = 'Round ' + (turn.round || 1);
+  const statsBox = document.getElementById('battleStatsBox');
+  if (statsBox) {
+    const stats = (state.battle && state.battle.stats) || {};
+    const rows = Object.entries(stats).map(([actor, s]) => `${escapeHtml(actor)}: ${s.hits||0} kena (${s.crits||0} crit) / ${s.misses||0} meleset`);
+    statsBox.textContent = rows.length ? `📊 ${rows.join(' | ')}` : '';
+  }
   const list = sortedBattle();
   const box = document.getElementById('battleList');
   if (!list.length) { box.innerHTML = '<p class="hint">Belum ada peserta battle.</p>'; return; }
@@ -955,6 +1024,13 @@ function renderBattle() {
     const ro = isPc ? 'readonly' : '';
     const elemStr = e.elements ? Object.entries(e.elements).filter(([,v])=>v&&v!=='0'&&v!=='0%').map(([k,v])=>`<span class="elem-badge">${k}:${v}</span>`).join(' ') : '';
     const condStr = (e.conditions||[]).map(c=>`<span class="hint">${escapeHtml(c)}</span>`).join(' ');
+    const isDying = (e.conditions||[]).includes('Sekarat');
+    const ds = e.death_saves || { success: 0, fail: 0 };
+    const deathSaveBlock = isDying ? `
+      <div class="row" style="margin:4px 0 0; align-items:center; gap:6px;">
+        <span class="hint" style="color:var(--crimson-bright);">💀 Sekarat: ${ds.success}✓ / ${ds.fail}✗</span>
+        <button type="button" class="small secondary death-save-btn">🎲 Death Save</button>
+      </div>` : '';
     return `<div class="battle-row ${e.id===turn.activeId?'active':''}" data-id="${e.id}">
       <div class="roll-num">${e.roll??'-'}</div>
       <div class="b-info">
@@ -965,6 +1041,7 @@ function renderBattle() {
         <div class="row" style="margin:3px 0 0;"><span class="stat-label">MP</span><input type="number" data-f="mp_current" value="${e.mp_current??''}" placeholder="now" ${ro}><span class="hint">/</span><input type="number" data-f="mp_max" value="${e.mp_max??''}" placeholder="max" ${ro}></div>
         <div class="row" style="margin:3px 0 0;"><span class="stat-label">SP</span><input type="number" data-f="sp_current" value="${e.sp_current??''}" placeholder="now" ${ro}><span class="hint">/</span><input type="number" data-f="sp_max" value="${e.sp_max??''}" placeholder="max" ${ro}></div>
         <div class="row" style="margin:3px 0 0;"><span class="stat-label">AC</span><input type="number" data-f="ac" value="${e.ac??''}" placeholder="AC" ${ro}></div>
+        ${deathSaveBlock}
         ${!isPc ? renderEntryBuffsHtml(e) : ''}
       </div>
       ${e.id===turn.activeId?'<span class="turn-flag">GILIRAN</span>':''}
@@ -977,6 +1054,10 @@ function renderBattle() {
       inp.addEventListener('change', e => { socket.emit('dm:battle-update', { code: CODE, id, patch: { [e.target.dataset.f]: e.target.value } }); });
     });
     row.querySelector('.row-remove').onclick = () => socket.emit('dm:battle-remove', { code: CODE, id });
+    const dsBtn = row.querySelector('.death-save-btn');
+    if (dsBtn) dsBtn.onclick = () => socket.emit('battle:death-save', { code: CODE, targetId: id }, (res) => {
+      if (!res || !res.ok) alert((res && res.error) || 'Gagal roll death save.');
+    });
     const currentBuffs = () => JSON.parse(JSON.stringify(((state.battle.entries||{})[id]?.buffs)||[]));
     row.querySelectorAll('.entry-buffs [data-bf]').forEach(el => {
       el.addEventListener('change', e => {
@@ -1167,17 +1248,22 @@ document.getElementById('btnBattleAdd').onclick = () => {
     const p = (state.playersList||[]).find(p=>p.id===id); if (!p) return alert('Pilih player.');
     const full = (state.players||{})[id]||{};
     const sheet = full.sheet||{};
-    entry = { name: p.nama_karakter||p.name, type, roll, hp_max: hpMax||p.max_hp, hp_current: hpMax||p.current_hp, mp_max: mpMax||sheet.mp_max, mp_current: mpMax||sheet.mp_current, sp_max: spMax||sheet.sp_max, sp_current: spMax||sheet.sp_current, ac: ac||sheet.ac, refType:'player', refId: id };
+    entry = { name: p.nama_karakter||p.name, type, roll, hp_max: hpMax||p.max_hp, hp_current: hpMax||p.current_hp, mp_max: mpMax||sheet.mp_max, mp_current: mpMax||sheet.mp_current, sp_max: spMax||sheet.sp_max, sp_current: spMax||sheet.sp_current, ac: ac||sheet.ac, initiative: sheet.initiative || 0, refType:'player', refId: id };
   } else {
     const id = document.getElementById('battleSourceRef').value;
     const n = (state.npcs||{})[id]; if (!n) return alert('Pilih NPC.');
-    entry = { name: n.nama, type, roll, hp_max: hpMax||n.hp_max, hp_current: hpMax||n.hp_current, mp_max: mpMax||n.mp_max, mp_current: mpMax||n.mp_current, sp_max: spMax||n.sp_max, sp_current: spMax||n.sp_current, ac: ac||n.ac, refType:'npc', refId: id, elements: n.elements||{} };
+    entry = { name: n.nama, type, roll, hp_max: hpMax||n.hp_max, hp_current: hpMax||n.hp_current, mp_max: mpMax||n.mp_max, mp_current: mpMax||n.mp_current, sp_max: spMax||n.sp_max, sp_current: spMax||n.sp_current, ac: ac||n.ac, initiative: n.initiative || 0, refType:'npc', refId: id, elements: n.elements||{} };
   }
   socket.emit('dm:battle-add', { code: CODE, entry }, () => {
     ['battleRoll','battleHpMax','battleMpMax','battleSpMax','battleAc'].forEach(id => { document.getElementById(id).value = ''; });
   });
 };
 document.getElementById('btnBattleNext').onclick = () => socket.emit('dm:battle-next', { code: CODE });
+document.getElementById('btnRollInitiative').onclick = () => {
+  socket.emit('dm:battle-roll-initiative', { code: CODE }, (res) => {
+    if (!res || !res.ok) alert((res && res.error) || 'Gagal roll initiative.');
+  });
+};
 document.getElementById('btnBattlePrev').onclick = () => socket.emit('dm:battle-prev', { code: CODE });
 document.getElementById('btnBattleClear').onclick = () => { if (confirm('Bersihkan battle?')) socket.emit('dm:battle-clear', { code: CODE }); };
 
@@ -1305,6 +1391,23 @@ function renderDmDiceButtons() {
 renderDmDiceButtons();
 
 document.getElementById('btnClearLog').onclick = ()=>{ if(confirm('Bersihkan log?')) socket.emit('chat:clear',{code:CODE}); };
+document.getElementById('btnExportLog').onclick = () => {
+  if (!state.log.length) return alert('Log masih kosong.');
+  const lines = state.log.map(e => {
+    const t = e.ts ? new Date(e.ts).toLocaleString('id-ID') : '';
+    return `**[${t}] ${e.from || 'Sistem'}:** ${e.text || ''}`;
+  });
+  const md = `# Battle Log — Sesi ${CODE}\n\n${lines.join('\n\n')}\n`;
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `battle-log-${CODE}-${Date.now()}.md`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+document.getElementById('btnBattleStatsReset').onclick = () => {
+  if (confirm('Reset statistik hit/miss/crit battle?')) socket.emit('dm:battle-reset-stats', { code: CODE });
+};
 document.getElementById('btnSendChat').onclick = sendChat;
 document.getElementById('chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat(); });
 
@@ -1551,6 +1654,16 @@ function renderQuestList() {
     const acceptedLine = accepted.length
       ? `<div class="quest-card-desc" style="margin-top:4px;">🙋 ${accepted.map(a => `${escapeHtml(a.name)}${a.completed ? ' ✅' : ''}`).join(', ')}</div>`
       : `<div class="hint" style="margin-top:4px;">Belum ada player yang ambil quest ini.</div>`;
+    const objectives = q.objectives || [];
+    const objLine = objectives.length ? `
+      <div class="quest-objectives" style="margin-top:6px;">
+        ${objectives.map(o => `
+          <div class="row" style="margin:2px 0; gap:4px; align-items:center;">
+            <input type="checkbox" class="quest-obj-toggle" data-qid="${q.id}" data-oid="${o.id}" ${o.done?'checked':''}>
+            <span style="flex:1; ${o.done?'text-decoration:line-through; opacity:.6;':''}">${escapeHtml(o.text)}</span>
+            <button type="button" class="quest-obj-del" data-qid="${q.id}" data-oid="${o.id}" style="background:none;border:none;color:var(--crimson-bright);cursor:pointer;">×</button>
+          </div>`).join('')}
+      </div>` : '';
     return `
     <div class="quest-card" data-id="${q.id}">
       <div class="quest-card-top">
@@ -1559,6 +1672,11 @@ function renderQuestList() {
       </div>
       ${q.desc ? `<div class="quest-card-desc">${escapeHtml(q.desc)}</div>` : ''}
       ${acceptedLine}
+      ${objLine}
+      <div class="row" style="margin-top:4px; gap:4px;">
+        <input type="text" class="quest-obj-input" data-qid="${q.id}" placeholder="+ Objektif baru…" style="flex:1;">
+        <button type="button" class="small secondary quest-obj-add" data-qid="${q.id}">+</button>
+      </div>
       <div class="row">
         <button type="button" class="small secondary quest-edit-btn" data-id="${q.id}" style="flex:1;">✏ Edit</button>
         <button type="button" class="small danger quest-del-btn" data-id="${q.id}" style="flex:1;">🗑 Hapus</button>
@@ -1567,6 +1685,22 @@ function renderQuestList() {
   }).join('');
   box.querySelectorAll('.quest-edit-btn').forEach(btn => { btn.onclick = () => loadQuestToForm((state.story.quests||{})[btn.dataset.id]); });
   box.querySelectorAll('.quest-del-btn').forEach(btn => { btn.onclick = () => { if (confirm('Hapus quest ini?')) socket.emit('dm:quest-delete', { code: CODE, questId: btn.dataset.id }); }; });
+  box.querySelectorAll('.quest-obj-toggle').forEach(cb => {
+    cb.onchange = () => socket.emit('dm:quest-toggle-objective', { code: CODE, questId: cb.dataset.qid, objectiveId: cb.dataset.oid });
+  });
+  box.querySelectorAll('.quest-obj-del').forEach(btn => {
+    btn.onclick = () => socket.emit('dm:quest-remove-objective', { code: CODE, questId: btn.dataset.qid, objectiveId: btn.dataset.oid });
+  });
+  box.querySelectorAll('.quest-obj-add').forEach(btn => {
+    btn.onclick = () => {
+      const input = box.querySelector(`.quest-obj-input[data-qid="${btn.dataset.qid}"]`);
+      const text = input.value.trim();
+      if (!text) return;
+      socket.emit('dm:quest-add-objective', { code: CODE, questId: btn.dataset.qid, text }, (res) => {
+        if (!res?.ok) alert(res?.error || 'Gagal menambah objektif.');
+      });
+    };
+  });
 }
 function loadQuestToForm(q) {
   document.getElementById('quest_id').value = q?.id || '';

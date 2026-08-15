@@ -17,6 +17,15 @@
   --shadow: 0 2px 10px rgba(0,0,0,.25);
 }
 
+/* Dark mode: panel yang tadinya "kertas" (parchment) jadi gelap, teks jadi terang.
+   Navy/gold/accent lain dibiarkan sama biar tetap konsisten temanya. */
+html[data-theme="dark"] {
+  --parchment: #1c2436;
+  --parchment-dark: #161d2c;
+  --ink: #e8e2d0;
+  --ink-soft: #b7ae95;
+}
+
 * { box-sizing: border-box; }
 
 html, body {

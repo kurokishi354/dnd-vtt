@@ -179,6 +179,8 @@ function ensureSessionDefaults(session) {
   if (!session.music.playback) session.music.playback = blankMusic().playback;
   if (!session.shop) session.shop = { items: {} };
   if (!session.npcs) session.npcs = {};
+  if (!session.battle) session.battle = { entries: {}, turn: { activeId: null, round: 1 }, stats: {} };
+  if (!session.battle.stats) session.battle.stats = {};
   if (!session.story) session.story = blankStory();
   if (!session.story.scene) session.story.scene = blankStory().scene;
   if (!session.story.dialogue) session.story.dialogue = blankStory().dialogue;
@@ -317,9 +319,29 @@ function sortedBattleList(session) {
   });
 }
 
+// Death saving throw ala 5e: HP nyentuh 0 -> status "Sekarat" (gak bisa aksi, harus roll d20 tiap
+// giliran: >=10 sukses, <10 gagal, natural 1 = 2 gagal sekaligus, natural 20 = langsung sadar HP 1).
+// 3 sukses -> "Stabil" (gak sadar tapi gak akan mati lagi). 3 gagal -> "Mati".
+function checkDeathState(entry, prevHp) {
+  const hp = parseFloat(entry.hp_current);
+  if (isNaN(hp)) return;
+  if (!Array.isArray(entry.conditions)) entry.conditions = [];
+  if (hp <= 0) {
+    const already = entry.conditions.includes('Sekarat') || entry.conditions.includes('Stabil') || entry.conditions.includes('Mati');
+    if (!already) {
+      entry.conditions.push('Sekarat');
+      entry.death_saves = { success: 0, fail: 0 };
+    }
+  } else if (hp > 0 && prevHp !== null && prevHp <= 0) {
+    // Sembuh dari 0 HP -> hapus semua status sekarat/stabil/mati & reset hitungan save.
+    entry.conditions = entry.conditions.filter(c => !['Sekarat', 'Stabil', 'Mati'].includes(c));
+    entry.death_saves = null;
+  }
+}
+
 // Kondisi "fatal" = karakter gak bisa bertindak sama sekali giliran itu (kaya RPG pada umumnya:
 // Stunned/Frozen/Sleep/Paralyzed), jadi battleAdvance otomatis melompati mereka.
-const FATAL_CONDITIONS = ['Stunned', 'Frozen', 'Sleep', 'Paralyzed'];
+const FATAL_CONDITIONS = ['Stunned', 'Frozen', 'Sleep', 'Paralyzed', 'Sekarat', 'Stabil', 'Mati'];
 function battleAdvance(session, dir) {
   const list = sortedBattleList(session);
   if (!list.length) return { skipped: [] };
@@ -681,7 +703,7 @@ io.on('connection', (socket) => {
       classes: {},
       maps: { main: Object.assign(newMap('Map 1'), { id: 'main' }) },
       activeMapId: 'main',
-      battle: { entries: {}, turn: { activeId: null, round: 1 } },
+      battle: { entries: {}, turn: { activeId: null, round: 1 }, stats: {} },
       music: blankMusic(),
       story: blankStory(),
       log: [],
@@ -823,6 +845,53 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true });
   });
 
+  // === Player: trade/kirim item ke player lain langsung, gak lewat DM ===
+  socket.on('player:trade-item', ({ code, toPlayerId, itemIndex, qty }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return cb && cb({ ok: false, error: 'Tidak diizinkan.' });
+    const fromId = socket.data.playerId;
+    const sender = session.players[fromId];
+    const receiver = session.players[toPlayerId];
+    if (!sender || !receiver) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    if (fromId === toPlayerId) return cb && cb({ ok: false, error: 'Gak bisa kirim ke diri sendiri.' });
+    if (!Array.isArray(sender.sheet.inventory)) sender.sheet.inventory = [];
+    const idx = parseInt(itemIndex, 10);
+    const srcItem = sender.sheet.inventory[idx];
+    if (!srcItem || !srcItem.item) return cb && cb({ ok: false, error: 'Item tidak ditemukan di inventorymu (mungkin sudah berubah, refresh dulu).' });
+    const ownedQty = parseInt(srcItem.qty, 10) || 1;
+    const sendQty = Math.max(1, Math.min(ownedQty, parseInt(qty, 10) || 1));
+
+    // Kurangi/hapus dari sender
+    if (sendQty >= ownedQty) sender.sheet.inventory.splice(idx, 1);
+    else srcItem.qty = ownedQty - sendQty;
+
+    // Tambahkan/stack ke receiver
+    if (!Array.isArray(receiver.sheet.inventory)) receiver.sheet.inventory = [];
+    const maxSlots = 15;
+    let dest = receiver.sheet.inventory.find(it => it.item === srcItem.item && it.type === srcItem.type && it.formula === srcItem.formula && !it.checked);
+    if (dest) {
+      dest.qty = (parseInt(dest.qty, 10) || 1) + sendQty;
+    } else if (receiver.sheet.inventory.length < maxSlots) {
+      receiver.sheet.inventory.push({ checked: false, item: srcItem.item, qty: sendQty, desc: srcItem.desc || '', type: srcItem.type || 'misc', formula: srcItem.formula || '', fromTrade: true });
+    } else {
+      // Inventory receiver penuh -> batalkan, kembalikan ke sender
+      if (sendQty >= ownedQty) sender.sheet.inventory.push(srcItem);
+      else srcItem.qty = ownedQty;
+      return cb && cb({ ok: false, error: `Inventory ${receiver.name} sudah penuh.` });
+    }
+
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId: fromId, sheet: sender.sheet });
+    io.to('dm-' + code).emit('sheet-updated', { playerId: toPlayerId, sheet: receiver.sheet });
+    if (sender.socketId) io.to(sender.socketId).emit('your-sheet-updated', { sheet: sender.sheet, note: `Kamu mengirim ${srcItem.item} x${sendQty} ke ${receiver.name}.` });
+    if (receiver.socketId) io.to(receiver.socketId).emit('your-sheet-updated', { sheet: receiver.sheet, note: `${sender.name} mengirim ${srcItem.item} x${sendQty} ke kamu!` });
+    const logEntry = { id: genId('log'), from: 'Sistem', text: `🔁 ${sender.name} mengirim ${srcItem.item} x${sendQty} ke ${receiver.name}.`, type: 'system', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
+  });
+
   // === DM: beri companion ke player ===
   socket.on('dm:give-companion', ({ code, playerId, companion }, cb) => {
     const session = sessions[code];
@@ -876,7 +945,36 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true });
   });
 
-  // === DM: atur Level / EXP / EXP Kelas seorang player (progres hanya boleh diubah DM) ===
+  // === DM: kasih XP langsung ke player, level otomatis naik pakai kurva sederhana
+  // (level = floor(total EXP / 1000) + 1). Beda sama dm:set-progress yang manual full override —
+  // ini buat alur cepat "menang battle -> kasih XP -> auto level up + notif".
+  const XP_PER_LEVEL = 1000;
+  socket.on('dm:give-xp', ({ code, playerId, amount }, cb) => {
+    const session = sessions[code];
+    if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    const amt = parseInt(amount, 10);
+    if (isNaN(amt) || amt <= 0) return cb && cb({ ok: false, error: 'Jumlah XP tidak valid.' });
+    const player = session.players[playerId];
+    const prevExp = parseInt(player.sheet.exp, 10) || 0;
+    const prevLv = parseInt(player.sheet.lv, 10) || 1;
+    const newExp = prevExp + amt;
+    const newLv = Math.max(1, Math.floor(newExp / XP_PER_LEVEL) + 1);
+    player.sheet.exp = newExp;
+    const leveledUp = newLv > prevLv;
+    if (leveledUp) player.sheet.lv = newLv;
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId, sheet: player.sheet });
+    io.to('dm-' + code).emit('players-update', publicPlayerList(session));
+    const note = leveledUp ? `🎉 +${amt} XP dari DM — Level Up! Sekarang Level ${newLv}!` : `+${amt} XP dari DM.`;
+    if (player.socketId) io.to(player.socketId).emit('your-sheet-updated', { sheet: player.sheet, note });
+    if (leveledUp) {
+      const logEntry = { id: genId('log'), from: 'Sistem', text: `🎉 ${player.name} naik ke Level ${newLv}!`, type: 'system', ts: Date.now(), secret: false };
+      session.log.push(logEntry);
+      if (session.log.length > 300) session.log.shift();
+      io.to('room-' + code).emit('chat:new', logEntry);
+    }
+    cb && cb({ ok: true, exp: newExp, lv: leveledUp ? newLv : prevLv, leveledUp });
+  });
   socket.on('dm:set-progress', ({ code, playerId, lv, exp, kelas_exp }, cb) => {
     const session = sessions[code];
     if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
@@ -1225,6 +1323,18 @@ io.on('connection', (socket) => {
     io.to('dm-' + code).emit('npcs-update', session.npcs);
   });
 
+  // === DM: atur relasi/reputasi NPC ini ke tiap player (musuh/netral/sekutu + catatan) ===
+  socket.on('dm:npc-set-relationships', ({ code, npcId, relationships }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return cb && cb({ ok: false });
+    const npc = session.npcs[npcId];
+    if (!npc) return cb && cb({ ok: false, error: 'NPC tidak ditemukan.' });
+    npc.relationships = relationships || {};
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('npcs-update', session.npcs);
+    cb && cb({ ok: true });
+  });
+
   // === DM: update map (gambar + grid) — selalu ke map yang lagi aktif/dibuka DM ===
   socket.on('dm:update-map', ({ code, imageUrl, width, height }) => {
     const session = sessions[code];
@@ -1393,6 +1503,7 @@ io.on('connection', (socket) => {
       name: entry.name || 'Tanpa Nama',
       type: entry.type || 'ally', // 'pc' | 'ally' | 'enemy'
       roll: entry.roll ?? 0,
+      initiative: entry.initiative ?? 0, // modifier buat auto-roll initiative (d20 + ini)
       hp_max: entry.hp_max ?? '',
       hp_current: entry.hp_current ?? entry.hp_max ?? '',
       mp_max: entry.mp_max ?? '',
@@ -1411,10 +1522,45 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true, id });
   });
 
+  // Roll initiative otomatis (d20 + modifier initiative) buat SEMUA peserta battle sekaligus,
+  // lalu urutan giliran otomatis disusun ulang dari roll tertinggi.
+  socket.on('dm:battle-roll-initiative', ({ code }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
+    const entries = Object.values(session.battle.entries || {});
+    if (!entries.length) return cb && cb({ ok: false, error: 'Belum ada peserta battle.' });
+    const summary = entries.map(entry => {
+      let bonus = parseFloat(entry.initiative) || 0;
+      if (entry.refType === 'player' && session.players[entry.refId]) {
+        bonus = parseFloat(session.players[entry.refId].sheet.initiative) || bonus;
+      }
+      const d20 = 1 + Math.floor(Math.random() * 20);
+      entry.roll = d20 + bonus;
+      return `${entry.name}: 🎲${d20}${bonus ? (bonus > 0 ? '+' : '') + bonus : ''} = ${entry.roll}`;
+    });
+    session.battle.turn.round = 1;
+    const ordered = sortedBattleList(session);
+    session.battle.turn.activeId = ordered.length ? ordered[0].id : null;
+    const logEntry = {
+      id: genId('log'), from: 'Sistem',
+      text: `🎲 Initiative di-roll ulang: ${summary.join(' | ')}`,
+      type: 'system', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('battle-updated', session.battle);
+    cb && cb({ ok: true });
+  });
+
   socket.on('dm:battle-update', ({ code, id, patch }) => {
     const session = sessions[code];
     if (!session || !session.battle.entries[id]) return;
-    Object.assign(session.battle.entries[id], patch);
+    const entry = session.battle.entries[id];
+    const prevHp = parseFloat(entry.hp_current);
+    Object.assign(entry, patch);
+    if (patch && 'hp_current' in patch) checkDeathState(entry, isNaN(prevHp) ? null : prevHp);
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
   });
@@ -1431,7 +1577,16 @@ io.on('connection', (socket) => {
   socket.on('dm:battle-clear', ({ code }) => {
     const session = sessions[code];
     if (!session) return;
-    session.battle = { entries: {}, turn: { activeId: null, round: 1 } };
+    session.battle = { entries: {}, turn: { activeId: null, round: 1 }, stats: {} };
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('battle-updated', session.battle);
+  });
+
+  // Reset statistik hit/miss/crit doang (tanpa hapus peserta battle), buat mulai battle baru.
+  socket.on('dm:battle-reset-stats', ({ code }) => {
+    const session = sessions[code];
+    if (!session) return;
+    session.battle.stats = {};
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
   });
@@ -1522,6 +1677,11 @@ io.on('connection', (socket) => {
         : hitInfo.crit
           ? ` — 💢 CRITICAL HIT! (d20=${hitInfo.d20})`
           : ` — 🎯 Kena (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`;
+      // Statistik hit/miss/crit per actor, buat ditampilin DM (reset manual per sesi/battle).
+      if (!session.battle.stats) session.battle.stats = {};
+      if (!session.battle.stats[actor]) session.battle.stats[actor] = { hits: 0, misses: 0, crits: 0 };
+      const st = session.battle.stats[actor];
+      if (hitInfo.result === 'miss') st.misses++; else { st.hits++; if (hitInfo.crit) st.crits++; }
     }
 
     let effectiveTotal = Math.max(0, roll.total + elemModifier - defReduction);
@@ -1542,6 +1702,11 @@ io.on('connection', (socket) => {
       }
       next = Math.max(0, next);
       entry[map.field] = next;
+      if (map.field === 'hp_current') {
+        checkDeathState(entry, cur);
+        if (next <= 0 && cur > 0 && entry.conditions.includes('Sekarat')) noteSuffix += ' 💀 Sekarat! (mulai death saving throw)';
+        else if (next > 0 && cur <= 0) noteSuffix += ' ✨ Sadar kembali!';
+      }
 
       if (entry.refType === 'player' && session.players[entry.refId]) {
         const tp = session.players[entry.refId];
@@ -1614,7 +1779,50 @@ io.on('connection', (socket) => {
     });
   });
 
-  // === Apply status condition ke target battle (support AoE ke banyak entry sekaligus) ===
+  // === Death Saving Throw: dipanggil pas entry lagi "Sekarat" (HP 0). d20: >=10 sukses,
+  // <10 gagal, natural 1 = 2 gagal sekaligus, natural 20 = langsung sadar dengan HP 1.
+  // 3 sukses -> Stabil (gak sadar tapi aman). 3 gagal -> Mati.
+  socket.on('battle:death-save', ({ code, targetId }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
+    const entry = session.battle.entries[targetId];
+    if (!entry) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
+    if (!entry.conditions || !entry.conditions.includes('Sekarat')) {
+      return cb && cb({ ok: false, error: `${entry.name} sedang tidak dalam kondisi Sekarat.` });
+    }
+    if (!entry.death_saves) entry.death_saves = { success: 0, fail: 0 };
+    const d20 = 1 + Math.floor(Math.random() * 20);
+    let text;
+    if (d20 === 20) {
+      entry.hp_current = 1;
+      entry.conditions = entry.conditions.filter(c => c !== 'Sekarat');
+      entry.death_saves = null;
+      text = `✨ ${entry.name} roll death save: d20=20 — NATURAL 20! Langsung sadar dengan 1 HP!`;
+    } else if (d20 === 1) {
+      entry.death_saves.fail += 2;
+      text = `💀 ${entry.name} roll death save: d20=1 — Natural 1, gagal x2! (${entry.death_saves.success} sukses / ${entry.death_saves.fail} gagal)`;
+    } else if (d20 >= 10) {
+      entry.death_saves.success += 1;
+      text = `🎲 ${entry.name} roll death save: d20=${d20} — Sukses. (${entry.death_saves.success} sukses / ${entry.death_saves.fail} gagal)`;
+    } else {
+      entry.death_saves.fail += 1;
+      text = `🎲 ${entry.name} roll death save: d20=${d20} — Gagal. (${entry.death_saves.success} sukses / ${entry.death_saves.fail} gagal)`;
+    }
+    if (entry.death_saves && entry.death_saves.success >= 3) {
+      entry.conditions = entry.conditions.filter(c => c !== 'Sekarat').concat('Stabil');
+      text += ` — ${entry.name} kini STABIL.`;
+    } else if (entry.death_saves && entry.death_saves.fail >= 3) {
+      entry.conditions = entry.conditions.filter(c => c !== 'Sekarat').concat('Mati');
+      text += ` — ${entry.name} MENINGGAL.`;
+    }
+    const logEntry = { id: genId('log'), from: 'Sistem', text, type: 'system', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('battle-updated', session.battle);
+    cb && cb({ ok: true });
+  });
   socket.on('battle:apply-status', ({ code, targetId, condition, actorName }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
@@ -1939,7 +2147,8 @@ io.on('connection', (socket) => {
     const q = {
       id, title: quest.title.trim(), desc: (quest.desc || '').trim(),
       status: quest.status || 'aktif', updatedAt: Date.now(),
-      acceptedBy: isExisting ? (session.story.quests[id].acceptedBy || {}) : {}
+      acceptedBy: isExisting ? (session.story.quests[id].acceptedBy || {}) : {},
+      objectives: isExisting ? (session.story.quests[id].objectives || []) : []
     };
     session.story.quests[id] = q;
     let logText = null;
@@ -2010,6 +2219,71 @@ io.on('connection', (socket) => {
     if (session.log.length > 300) session.log.shift();
     io.to('room-' + code).emit('chat:new', logEntry);
     cb && cb({ ok: true });
+  });
+
+  // === Quest: DM tambah objektif (sub-goal checklist) ke quest ===
+  socket.on('dm:quest-add-objective', ({ code, questId, text }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return cb && cb({ ok: false });
+    const quest = session.story.quests[questId];
+    if (!quest) return cb && cb({ ok: false, error: 'Quest tidak ditemukan.' });
+    const t = (text || '').trim();
+    if (!t) return cb && cb({ ok: false, error: 'Isi teks objektif.' });
+    if (!Array.isArray(quest.objectives)) quest.objectives = [];
+    quest.objectives.push({ id: genId('obj'), text: t, done: false });
+    quest.updatedAt = Date.now();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+    cb && cb({ ok: true });
+  });
+
+  socket.on('dm:quest-remove-objective', ({ code, questId, objectiveId }) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return;
+    const quest = session.story.quests[questId];
+    if (!quest || !Array.isArray(quest.objectives)) return;
+    quest.objectives = quest.objectives.filter(o => o.id !== objectiveId);
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+  });
+
+  // === Quest: toggle centang objektif — boleh DM ATAU player yang udah ambil quest itu
+  // (checklist bareng-bareng, biar party bisa lacak progress sama-sama). ===
+  function toggleQuestObjective(session, code, questId, objectiveId, actorName) {
+    const quest = session.story.quests[questId];
+    if (!quest || !Array.isArray(quest.objectives)) return null;
+    const obj = quest.objectives.find(o => o.id === objectiveId);
+    if (!obj) return null;
+    obj.done = !obj.done;
+    quest.updatedAt = Date.now();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('quests-updated', session.story.quests);
+    const logEntry = {
+      id: genId('log'), from: 'Quest',
+      text: `${obj.done ? '☑' : '☐'} ${actorName} ${obj.done ? 'menyelesaikan' : 'membuka lagi'} objektif "${obj.text}" (${quest.title})`,
+      type: 'quest', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+    return obj;
+  }
+  socket.on('dm:quest-toggle-objective', ({ code, questId, objectiveId }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return cb && cb({ ok: false });
+    const obj = toggleQuestObjective(session, code, questId, objectiveId, 'DM');
+    cb && cb(obj ? { ok: true } : { ok: false, error: 'Objektif tidak ditemukan.' });
+  });
+  socket.on('player:quest-toggle-objective', ({ code, questId, objectiveId }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'player' || socket.data.code !== code) return cb && cb({ ok: false });
+    const quest = session.story.quests[questId];
+    if (!quest || !quest.acceptedBy || !quest.acceptedBy[socket.data.playerId]) {
+      return cb && cb({ ok: false, error: 'Kamu belum ambil quest ini.' });
+    }
+    const player = session.players[socket.data.playerId];
+    const obj = toggleQuestObjective(session, code, questId, objectiveId, player.name);
+    cb && cb(obj ? { ok: true } : { ok: false, error: 'Objektif tidak ditemukan.' });
   });
 
   // === Story: Handout (kirim dokumen/gambar/catatan ke satu atau semua player) ===

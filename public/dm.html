@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DM Board — DnD VTT</title>
 <link rel="stylesheet" href="/style.css">
+<script>(function(){ try { var t = localStorage.getItem('dnd_vtt_theme'); if (t === 'dark') document.documentElement.dataset.theme = 'dark'; } catch(e){} })();</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   .dm-shell { max-width: 1700px; margin: 16px auto; padding: 0 16px; }
@@ -150,6 +151,7 @@
       <span class="code-badge" id="codeBadge">----</span>
       <button id="btnCopyCode" class="small">Salin Kode</button>
       <span class="badge" id="connBadge">menghubungkan…</span>
+      <button type="button" id="btnThemeToggle" class="small secondary" title="Ganti tema terang/gelap">🌙</button>
       <a href="/" class="btn secondary" style="text-decoration:none; display:inline-flex; align-items:center;">Keluar</a>
     </div>
   </div>
@@ -171,7 +173,7 @@
   <div class="dm-grid cols-2-even">
     <div>
       <div class="panel">
-        <div class="panel-header">🎲 Log &amp; Dice <button type="button" class="small secondary" id="btnClearLog">Bersihkan Log</button></div>
+        <div class="panel-header">🎲 Log &amp; Dice <button type="button" class="small secondary" id="btnClearLog">Bersihkan Log</button> <button type="button" class="small secondary" id="btnExportLog">⬇ Export Log</button></div>
         <div class="dice-quick-row" id="dmDiceQuickRow"></div>
         <label class="hint" style="display:flex;align-items:center;gap:5px;margin:4px 0;">
           <input type="checkbox" id="dmRollSecret" checked style="width:auto;"> Sembunyikan hasil roll dari player
@@ -445,6 +447,10 @@
     <div>
       <div class="panel">
         <div class="panel-header">⚔ Battle &amp; Giliran <span class="badge" id="roundBadge">Round 1</span></div>
+        <div id="battleStatsBox" class="hint" style="margin-bottom:6px;"></div>
+        <div class="row" style="margin-bottom:6px;">
+          <button type="button" id="btnBattleStatsReset" class="small secondary">📊 Reset Statistik</button>
+        </div>
         <div class="battle-add-box">
           <div class="row">
             <select id="battleSourceType">
@@ -474,6 +480,7 @@
           <button id="btnBattleAdd" class="small" style="width:100%;">+ Tambah ke Battle</button>
         </div>
         <p class="hint" style="margin-bottom:6px;">HP terlihat player. MP &amp; SP hanya terlihat DM.</p>
+        <button id="btnRollInitiative" class="small" style="width:100%; margin-bottom:6px;">🎲 Roll Initiative Semua</button>
         <div id="battleList"></div>
         <div class="row" style="margin-top:8px;">
           <button id="btnBattlePrev" class="secondary small">‹ Prev</button>
@@ -686,6 +693,11 @@
       </div>
       <button id="btnSetProgress" class="small" style="width:100%; margin-top:6px;">Terapkan ke Player</button>
       <p class="hint" id="progressStatus" style="margin-top:4px;"></p>
+      <div class="row" style="margin-top:8px; border-top:1px dashed var(--gold); padding-top:8px;">
+        <div class="field" style="margin:0;"><label>🎁 Beri XP (otomatis level up)</label><input type="number" id="giveXp_amount" placeholder="mis. 100"></div>
+        <button id="btnGiveXp" class="small" style="white-space:nowrap;">Beri XP</button>
+      </div>
+      <p class="hint" id="giveXpStatus" style="margin-top:4px;"></p>
     </div>
 
     <div class="give-item-box">
@@ -797,6 +809,13 @@
     </div>
 
     <div class="field"><label>Catatan DM</label><textarea id="npc_catatan" rows="2"></textarea></div>
+
+    <div class="npc-subpanel">
+      <div class="npc-subpanel-title">❤ Relasi/Reputasi per Player</div>
+      <p class="hint">Nilai -100 (musuh bebuyutan) s/d 100 (sekutu setia). Cuma DM yang lihat &amp; atur ini.</p>
+      <div id="npcRelationshipList"></div>
+    </div>
+
     <div class="row">
       <button id="btnSaveNpc">💾 Simpan NPC</button>
       <button id="btnDeleteNpc" class="danger">Hapus</button>

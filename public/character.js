@@ -118,6 +118,7 @@ let raceTraitState = Array.from({ length: RACE_TRAIT_SLOTS }, () => ({ nama: '',
 
 let buffState = [];
 let companionState = [];
+let skillCooldownState = {}; // { "active_0": sisaGiliran, ... } — di-reset saat skill dipakai, dikurangi tiap giliran sendiri mulai
 let classCatalog = {};
 let myUnlockedClasses = [];
 let shopItems = {};
@@ -169,6 +170,7 @@ function showToast(message) {
 // =============================== ONLINE PLAYERS =========================
 function renderOnlinePlayers() {
   const bar = document.getElementById('onlinePlayersBar');
+  renderTradeTargetSelect();
   if (!bar) return;
   if (!onlinePlayersList.length) { bar.innerHTML = '<span class="hint">Belum ada pemain lain online.</span>'; return; }
   bar.innerHTML = onlinePlayersList.map(p =>
@@ -296,7 +298,37 @@ function renderInventory() {
   }
   const addBtn = document.getElementById('btnAddInvSlot');
   if (addBtn) addBtn.disabled = invState.length >= max;
+  renderTradeItemSelect();
 }
+
+// =============================== TRADE (kirim item ke player lain) =======
+function renderTradeItemSelect() {
+  const sel = document.getElementById('tradeItemSelect');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = invState.map((it, i) => it.item ? `<option value="${i}">${escapeAttrVal(it.item)} (x${it.qty||1})</option>` : '').join('');
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+function renderTradeTargetSelect() {
+  const sel = document.getElementById('tradeTargetSelect');
+  if (!sel) return;
+  const others = onlinePlayersList.filter(p => p.id !== PLAYER_ID);
+  sel.innerHTML = others.length
+    ? others.map(p => `<option value="${p.id}">${escapeAttrVal(p.nama_karakter || p.name)}${p.online ? '' : ' (offline)'}</option>`).join('')
+    : '<option value="">- tidak ada player lain -</option>';
+}
+document.getElementById('btnSendTrade')?.addEventListener('click', () => {
+  const itemIndex = document.getElementById('tradeItemSelect').value;
+  const toPlayerId = document.getElementById('tradeTargetSelect').value;
+  const qty = parseInt(document.getElementById('tradeQty').value, 10) || 1;
+  const status = document.getElementById('tradeStatus');
+  if (itemIndex === '') { status.textContent = 'Pilih item dulu.'; return; }
+  if (!toPlayerId) { status.textContent = 'Pilih target player dulu.'; return; }
+  socket.emit('player:trade-item', { code: CODE, toPlayerId, itemIndex, qty }, (res) => {
+    if (res && res.ok) { status.textContent = '✓ Item terkirim.'; }
+    else { status.textContent = (res && res.error) || 'Gagal mengirim item.'; }
+  });
+});
 document.getElementById('btnAddInvSlot').addEventListener('click', () => {
   if (invState.length >= invMaxSlots()) return;
   invState.push({ checked: false, item: '', desc: '', type: 'misc', qty: 1 });
@@ -823,6 +855,7 @@ function renderStaticSections() {
       <div class="row">
         <div class="field" style="max-width:70px; margin:0;"><label>MP</label><input type="number" id="${prefix}_${i}_mp_cost" placeholder="0"></div>
         <div class="field" style="max-width:70px; margin:0;"><label>SP</label><input type="number" id="${prefix}_${i}_sp_cost" placeholder="0"></div>
+        <div class="field" style="max-width:80px; margin:0;"><label>CD (giliran)</label><input type="number" min="0" id="${prefix}_${i}_cooldown" placeholder="0"></div>
         <div class="field" style="max-width:130px; margin:0;"><label>Jenis Aksi</label>
           <select id="${prefix}_${i}_action">${SKILL_ACTION_OPTIONS.map(([v,l]) => `<option value="${v}" ${v===defaultAction?'selected':''}>${l}</option>`).join('')}</select>
         </div>
@@ -1004,18 +1037,19 @@ function fillForm(sheet) {
     const n = nByCat[cat];
     for (let i = 0; i < n; i++) {
       ['nama','rank','formula','desc'].forEach(f => { const el = document.getElementById(`sk_${cat}_${i}_${f}`); if (el) el.value = ''; });
-      ['mp_cost','sp_cost'].forEach(f => { const el = document.getElementById(`sk_${cat}_${i}_${f}`); if (el) el.value = ''; });
+      ['mp_cost','sp_cost','cooldown'].forEach(f => { const el = document.getElementById(`sk_${cat}_${i}_${f}`); if (el) el.value = ''; });
       const acEl = document.getElementById(`sk_${cat}_${i}_action`); if (acEl) acEl.value = defaultActionByCat[cat];
       const seEl = document.getElementById(`sk_${cat}_${i}_statusEffect`); if (seEl) seEl.value = '';
     }
     (skills[cat] || []).forEach((s, i) => {
       if (i >= n) return;
       ['nama','rank','formula','desc'].forEach(f => { const el = document.getElementById(`sk_${cat}_${i}_${f}`); if (el) el.value = s[f] || ''; });
-      ['mp_cost','sp_cost'].forEach(f => { const el = document.getElementById(`sk_${cat}_${i}_${f}`); if (el) el.value = s[f] || ''; });
+      ['mp_cost','sp_cost','cooldown'].forEach(f => { const el = document.getElementById(`sk_${cat}_${i}_${f}`); if (el) el.value = s[f] || ''; });
       const acEl = document.getElementById(`sk_${cat}_${i}_action`); if (acEl) acEl.value = s.action || defaultActionByCat[cat];
       const seEl = document.getElementById(`sk_${cat}_${i}_statusEffect`); if (seEl) seEl.value = s.statusEffect || '';
     });
   });
+  skillCooldownState = sheet.skill_cooldowns ? JSON.parse(JSON.stringify(sheet.skill_cooldowns)) : {};
 
   buffState = (sheet.buffs && sheet.buffs.length)
     ? JSON.parse(JSON.stringify(sheet.buffs)).filter(b => b && (b.nama || b.jenis || b.durasi))
@@ -1072,6 +1106,7 @@ function readForm() {
     gold: val('f_gold'),
     companions: companionState,
     skills: { active: [], passive: [], ultimate: [] },
+    skill_cooldowns: skillCooldownState,
     buffs: buffState,
     race_trait: raceTraitState,
     class_trait: {},
@@ -1087,6 +1122,7 @@ function readForm() {
       sheet.skills[cat].push({
         nama: val(`sk_${cat}_${i}_nama`), rank: val(`sk_${cat}_${i}_rank`),
         mp_cost: val(`sk_${cat}_${i}_mp_cost`), sp_cost: val(`sk_${cat}_${i}_sp_cost`),
+        cooldown: val(`sk_${cat}_${i}_cooldown`),
         formula: val(`sk_${cat}_${i}_formula`), action: val(`sk_${cat}_${i}_action`),
         statusEffect: val(`sk_${cat}_${i}_statusEffect`), desc: val(`sk_${cat}_${i}_desc`)
       });
@@ -1481,6 +1517,9 @@ function renderBattleSkillList() {
       const rank = val(`sk_${cat}_${i}_rank`);
       const mpCost = parseInt(val(`sk_${cat}_${i}_mp_cost`), 10) || 0;
       const spCost = parseInt(val(`sk_${cat}_${i}_sp_cost`), 10) || 0;
+      const cdMax = parseInt(val(`sk_${cat}_${i}_cooldown`), 10) || 0;
+      const cdKey = `${cat}_${i}`;
+      const cdLeft = parseInt(skillCooldownState[cdKey], 10) || 0;
       const formula = val(`sk_${cat}_${i}_formula`);
       const action = val(`sk_${cat}_${i}_action`) || defaultActionByCat[cat];
       const statusEffect = val(`sk_${cat}_${i}_statusEffect`);
@@ -1488,11 +1527,13 @@ function renderBattleSkillList() {
       const costParts = [];
       if (mpCost > 0) costParts.push(`🔵${mpCost} MP`);
       if (spCost > 0) costParts.push(`🟢${spCost} SP`);
+      if (cdMax > 0) costParts.push(`⏳CD ${cdMax}x`);
       const cantAfford = (mpCost > 0 && mpCur < mpCost) || (spCost > 0 && spCur < spCost);
+      const onCooldown = cdLeft > 0;
       lines.push(`
         <div class="skill-line" style="align-items:center; flex-wrap:wrap; gap:4px;">
           <span style="flex:1; min-width:120px;">${pEscapeHtml(nama)} <span class="hint">${pEscapeHtml(rank||'-')} · ${pEscapeHtml(SKILL_ACTION_LABEL[action]||action)}</span>${costParts.length?` <span class="hint">(${costParts.join(', ')})</span>`:''}${statusEffect?` <span class="hint">[→${pEscapeHtml(statusEffect)}]</span>`:''}${desc?`<br><span class="hint" style="font-size:11px;">${pEscapeHtml(desc)}</span>`:''}</span>
-          <button type="button" class="small skill-use-btn" ${cantAfford?'disabled title="MP/SP tidak cukup"':''} data-cat="${cat}" data-i="${i}" data-mp="${mpCost}" data-sp="${spCost}" data-formula="${escapeAttrVal(formula)}" data-action="${action}" data-status="${escapeAttrVal(statusEffect)}">⚡ Pakai</button>
+          <button type="button" class="small skill-use-btn" ${(cantAfford||onCooldown)?`disabled title="${onCooldown?`Cooldown, sisa ${cdLeft} giliran`:'MP/SP tidak cukup'}"`:''} data-cat="${cat}" data-i="${i}" data-mp="${mpCost}" data-sp="${spCost}" data-cd="${cdMax}" data-formula="${escapeAttrVal(formula)}" data-action="${action}" data-status="${escapeAttrVal(statusEffect)}">${onCooldown?`⏳ CD: ${cdLeft}`:'⚡ Pakai'}</button>
         </div>`);
     }
     if (lines.length) html += `<div class="battle-skill-cat">${catLabel[cat]}</div>` + lines.join('');
@@ -1505,12 +1546,16 @@ function useSkillInBattle(ds) {
   const nama = val(`sk_${ds.cat}_${ds.i}_nama`) || 'Skill';
   const mpCost = parseInt(ds.mp,10)||0;
   const spCost = parseInt(ds.sp,10)||0;
+  const cdMax = parseInt(ds.cd,10)||0;
+  const cdKey = `${ds.cat}_${ds.i}`;
   const mpCur = parseInt(val('f_mp_current'),10)||0;
   const spCur = parseInt(val('f_sp_current'),10)||0;
   if (mpCost > 0 && mpCur < mpCost) { alert(`MP tidak cukup untuk "${nama}" (butuh ${mpCost}, sisa ${mpCur}).`); return; }
   if (spCost > 0 && spCur < spCost) { alert(`SP tidak cukup untuk "${nama}" (butuh ${spCost}, sisa ${spCur}).`); return; }
+  if ((parseInt(skillCooldownState[cdKey],10)||0) > 0) { alert(`"${nama}" masih cooldown (sisa ${skillCooldownState[cdKey]} giliran).`); return; }
   if (mpCost > 0) document.getElementById('f_mp_current').value = mpCur - mpCost;
   if (spCost > 0) document.getElementById('f_sp_current').value = spCur - spCost;
+  if (cdMax > 0) skillCooldownState[cdKey] = cdMax;
   renderBattleStatus(); scheduleSave();
 
   // Apply status effect to target
@@ -1649,7 +1694,22 @@ document.querySelector('.sheet').addEventListener('input', renderBattleStatus);
 document.querySelector('.sheet').addEventListener('change', renderBattleStatus);
 
 // =============================== BATTLE LIST ============================
-socket.on('battle-updated', (battle) => { battleState.battle = battle; renderPBattle(); });
+let lastMyTurnActiveId = null;
+socket.on('battle-updated', (battle) => {
+  battleState.battle = battle;
+  // Tiap giliran karakter sendiri mulai (activeId berubah jadi entry kita), kurangi semua cooldown skill 1x.
+  const turn = battle && battle.turn;
+  const myEntry = Object.values((battle && battle.entries) || {}).find(e => e.refType === 'player' && e.refId === PLAYER_ID);
+  if (turn && myEntry && turn.activeId === myEntry.id && lastMyTurnActiveId !== turn.activeId + '@' + turn.round) {
+    lastMyTurnActiveId = turn.activeId + '@' + turn.round;
+    let changed = false;
+    Object.keys(skillCooldownState).forEach(k => {
+      if ((skillCooldownState[k]||0) > 0) { skillCooldownState[k] -= 1; changed = true; }
+    });
+    if (changed) { scheduleSave(); renderBattleSkillList(); }
+  }
+  renderPBattle();
+});
 socket.on('battle-apply-status', ({ targetId, condition }) => {
   // If I'm the target, auto-check the condition
   const myEntry = Object.values(battleState.battle.entries || {}).find(e => e.refType === 'player' && e.refId === PLAYER_ID);
@@ -1673,6 +1733,14 @@ function renderPBattle() {
   box.innerHTML = list.map(e => {
     const pct = (() => { const m=parseFloat(e.hp_max),c=parseFloat(e.hp_current); if(!m||isNaN(m)) return 0; return Math.max(0,Math.min(100,(isNaN(c)?m:c)/m*100)); })();
     const conditions = (e.conditions || []).map(c => `<span class="hint">${pEscapeHtml(c)}</span>`).join(' ');
+    const isMe = e.refType === 'player' && e.refId === PLAYER_ID;
+    const isDying = (e.conditions||[]).includes('Sekarat');
+    const ds = e.death_saves || { success: 0, fail: 0 };
+    const deathSaveBlock = (isDying && isMe) ? `
+      <div style="margin-top:4px;">
+        <span class="hint" style="color:var(--crimson-bright);">💀 Sekarat: ${ds.success}✓ / ${ds.fail}✗</span>
+        <button type="button" class="small secondary death-save-btn-p" data-id="${e.id}" style="margin-left:6px;">🎲 Death Save</button>
+      </div>` : (isDying ? `<div class="hint" style="color:var(--crimson-bright); margin-top:4px;">💀 Sekarat: ${ds.success}✓ / ${ds.fail}✗</div>` : '');
     return `<div class="battle-row ${e.id===turn.activeId?'active':''}">
       <div class="roll-num">${e.roll??'-'}</div>
       <div class="b-info">
@@ -1680,10 +1748,18 @@ function renderPBattle() {
         <div class="mini-bar-wrap hp" style="margin-top:4px;"><div class="mini-bar-fill" style="width:${pct}%;"></div></div>
         <div class="hint">${e.hp_current??'?'} / ${e.hp_max??'?'} HP${e.ac!==undefined&&e.ac!==''?' · AC '+e.ac:''}</div>
         ${conditions ? `<div style="margin-top:2px;">${conditions}</div>` : ''}
+        ${deathSaveBlock}
       </div>
       ${e.id===turn.activeId?'<span class="turn-flag">GILIRAN</span>':''}
     </div>`;
   }).join('');
+  box.querySelectorAll('.death-save-btn-p').forEach(btn => {
+    btn.addEventListener('click', () => {
+      socket.emit('battle:death-save', { code: CODE, targetId: btn.dataset.id }, (res) => {
+        if (!res || !res.ok) alert((res && res.error) || 'Gagal roll death save.');
+      });
+    });
+  });
 
   const targetSel = document.getElementById('pActionTarget');
   if (targetSel) {
@@ -1834,6 +1910,18 @@ function renderPlayerQuestList() {
     } else {
       actionHtml = `<p class="hint" style="margin-top:6px;">✅ Kamu sudah menandai quest ini selesai — menunggu konfirmasi DM.</p>`;
     }
+    const objectives = q.objectives || [];
+    const objLine = (mine && objectives.length) ? `
+      <div class="quest-objectives" style="margin-top:6px;">
+        ${objectives.map(o => `
+          <div class="row" style="margin:2px 0; gap:4px; align-items:center;">
+            <input type="checkbox" class="pquest-obj-toggle" data-qid="${q.id}" data-oid="${o.id}" ${o.done?'checked':''}>
+            <span style="flex:1; ${o.done?'text-decoration:line-through; opacity:.6;':''}">${pEscapeHtml(o.text)}</span>
+          </div>`).join('')}
+      </div>` : (objectives.length ? `
+      <div class="quest-objectives hint" style="margin-top:6px;">
+        ${objectives.map(o => `${o.done?'☑':'☐'} ${pEscapeHtml(o.text)}`).join('<br>')}
+      </div>` : '');
     return `
     <div class="quest-card">
       <div class="quest-card-top">
@@ -1841,6 +1929,7 @@ function renderPlayerQuestList() {
         <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
       </div>
       ${q.desc ? `<div class="quest-card-desc">${pEscapeHtml(q.desc)}</div>` : ''}
+      ${objLine}
       ${actionHtml}
     </div>`;
   }).join('');
@@ -1852,6 +1941,11 @@ function renderPlayerQuestList() {
   box.querySelectorAll('.quest-complete-btn').forEach(btn => {
     btn.onclick = () => socket.emit('player:quest-complete', { code: CODE, questId: btn.dataset.id }, (res) => {
       if (!res || !res.ok) alert((res && res.error) || 'Gagal menandai quest selesai.');
+    });
+  });
+  box.querySelectorAll('.pquest-obj-toggle').forEach(cb => {
+    cb.onchange = () => socket.emit('player:quest-toggle-objective', { code: CODE, questId: cb.dataset.qid, objectiveId: cb.dataset.oid }, (res) => {
+      if (!res || !res.ok) alert((res && res.error) || 'Gagal update objektif.');
     });
   });
 }
@@ -2005,6 +2099,19 @@ document.addEventListener('click', () => { if (!playerMusicUnlocked) { playerMus
 document.getElementById('btnMusicUnlock').addEventListener('click', () => { playerMusicUnlocked=true; syncPlayerMusic(); });
 const volEl = document.getElementById('musicBarVolume');
 if (volEl) volEl.addEventListener('input', e => { playerMusicPlayer.volume = parseFloat(e.target.value); });
+
+// =============================== DARK MODE ===============================
+(function setupThemeToggle() {
+  const btn = document.getElementById('btnThemeToggle');
+  if (!btn) return;
+  const apply = (dark) => {
+    document.documentElement.dataset.theme = dark ? 'dark' : '';
+    btn.textContent = dark ? '☀' : '🌙';
+    try { localStorage.setItem('dnd_vtt_theme', dark ? 'dark' : 'light'); } catch(e){}
+  };
+  apply(document.documentElement.dataset.theme === 'dark');
+  btn.addEventListener('click', () => apply(document.documentElement.dataset.theme !== 'dark'));
+})();
 const muteEl = document.getElementById('btnMusicMute');
 if (muteEl) muteEl.addEventListener('click', () => { playerMusicPlayer.muted = !playerMusicPlayer.muted; muteEl.textContent = playerMusicPlayer.muted ? '🔇' : '🔊'; });
 
