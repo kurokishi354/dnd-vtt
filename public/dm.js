@@ -1055,6 +1055,7 @@ socket.on('battle-updated', (battle) => {
   renderBattle();
   if (window.BattleFX) window.BattleFX.processBattleUpdate({ prevEntries, battle, mapInnerEl: mapInner, prevActiveId });
 });
+socket.on('battle:action-fx', (fx) => { if (window.BattleFX) window.BattleFX.showVsCard(fx); });
 
 function sortedBattle() {
   const entries = Object.values((state.battle && state.battle.entries) || {});

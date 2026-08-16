@@ -1862,6 +1862,25 @@ io.on('connection', (socket) => {
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('battle-updated', session.battle);
 
+    // Event ringan khusus buat efek visual "vs card" (attacker vs target) di klien —
+    // gak nyimpen apa-apa ke session, cuma broadcast portrait & hasil roll biar semua
+    // orang di room lihat dramatisasi combat-nya, bukan cuma yang ngerjain aksi.
+    const actorEntry = Object.values(session.battle.entries).find(e => e.name === actor);
+    io.to('room-' + code).emit('battle:action-fx', {
+      actorName: actor,
+      actorPortrait: actorEntry ? actorEntry.portrait : null,
+      actionType,
+      formula,
+      targets: results.map(r => ({
+        entryId: r.entryId,
+        entryName: r.entryName,
+        portrait: (session.battle.entries[r.entryId] || {}).portrait || null,
+        hit: r.hit,
+        rollTotal: r.roll ? r.roll.total : null,
+        logType: r.logType
+      }))
+    });
+
     let logEntry;
     if (aoeGroup) {
       const label = BATTLE_ACTION_LABEL[actionType] || actionType;

@@ -1849,6 +1849,7 @@ socket.on('battle-updated', (battle) => {
   renderPBattle();
   if (window.BattleFX) window.BattleFX.processBattleUpdate({ prevEntries, battle, mapInnerEl: pMapInner, prevActiveId, myEntryId: myEntry && myEntry.id });
 });
+socket.on('battle:action-fx', (fx) => { if (window.BattleFX) window.BattleFX.showVsCard(fx); });
 socket.on('battle-apply-status', ({ targetId, condition }) => {
   // If I'm the target, auto-check the condition
   const myEntry = Object.values(battleState.battle.entries || {}).find(e => e.refType === 'player' && e.refId === PLAYER_ID);

@@ -110,5 +110,54 @@
     }
   }
 
-  window.BattleFX = { processBattleUpdate, flashBar, spawnFloatNumber, highlightActiveToken, showTurnBanner };
+  // "VS card" — portrait attacker & target berdampingan pas ada Aksi Roll,
+  // muncul sekilas di tengah layar semua orang buat dramatisasi combat.
+  let vsCardTimer = null;
+  function portraitOrFallback(portrait, name) {
+    if (portrait) return `<img src="${portrait}" alt="" class="vs-card-portrait-img">`;
+    return `<span class="vs-card-portrait-fallback">${escapeForBanner((name || '?').slice(0, 1).toUpperCase())}</span>`;
+  }
+  function showVsCard(fx) {
+    if (!fx || !fx.targets || !fx.targets.length) return;
+    let host = document.getElementById('vsCardHost');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'vsCardHost';
+      host.className = 'vs-card-host';
+      document.body.appendChild(host);
+    }
+    clearTimeout(vsCardTimer);
+    const target = fx.targets[0];
+    const extra = fx.targets.length - 1;
+    const hit = target.hit;
+    let hitBadge = '';
+    if (hit) {
+      hitBadge = hit.result === 'miss'
+        ? '<span class="vs-card-hit miss">❌ MELESET</span>'
+        : hit.crit
+          ? '<span class="vs-card-hit crit">💢 CRITICAL!</span>'
+          : '<span class="vs-card-hit hit">🎯 KENA</span>';
+    }
+    host.innerHTML = `<div class="vs-card">
+      <div class="vs-card-side">
+        <span class="vs-card-portrait">${portraitOrFallback(fx.actorPortrait, fx.actorName)}</span>
+        <span class="vs-card-name">${escapeForBanner(fx.actorName)}</span>
+      </div>
+      <div class="vs-card-mid">
+        <span class="vs-card-vs">VS</span>
+        ${target.rollTotal != null ? `<span class="vs-card-roll">${target.rollTotal}</span>` : ''}
+        ${hitBadge}
+        ${extra > 0 ? `<span class="vs-card-extra">+${extra} lainnya</span>` : ''}
+      </div>
+      <div class="vs-card-side">
+        <span class="vs-card-portrait">${portraitOrFallback(target.portrait, target.entryName)}</span>
+        <span class="vs-card-name">${escapeForBanner(target.entryName)}</span>
+      </div>
+    </div>`;
+    void host.offsetWidth;
+    host.classList.add('show');
+    vsCardTimer = setTimeout(() => { host.classList.remove('show'); }, 1900);
+  }
+
+  window.BattleFX = { processBattleUpdate, flashBar, spawnFloatNumber, highlightActiveToken, showTurnBanner, showVsCard };
 })();
