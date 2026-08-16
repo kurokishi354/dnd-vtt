@@ -162,6 +162,7 @@
     <button id="tabBtnDmNpc">👹 NPC</button>
     <button id="tabBtnDmClasses">🎓 Kelas</button>
     <button id="tabBtnDmShop">🛒 Shop</button>
+    <button id="tabBtnDmCraft">🛠 Crafting</button>
     <button id="tabBtnDmMusic">🎵 Musik</button>
     <button id="tabBtnDmStory">📖 Cerita</button>
     <button id="tabBtnDmBattle">⚔ Battle</button>
@@ -324,6 +325,51 @@
     </div>
   </div><!-- /tab-dm-shop -->
 
+  <!-- ===== TAB: CRAFTING (full width, search) ===== -->
+  <div id="tab-dm-craft" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">🛠 Katalog Resep Crafting</div>
+      <p class="hint" style="margin-bottom:6px;">Buat resep: bahan (cocokkan nama item persis dengan yang ada di inventory player) + hasil craft. Player bisa craft sendiri di tab Crafting mereka kalau bahannya cukup — bahan otomatis kepotong dari inventory.</p>
+      <div class="battle-add-box">
+        <input type="hidden" id="craft_id">
+        <div class="row">
+          <input type="text" id="craft_nama" placeholder="Nama resep (mis. Ramuan Sehat)" style="flex:2;">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="craft_deskripsi" placeholder="Deskripsi resep (opsional)">
+        </div>
+        <p class="hint" style="margin:8px 0 2px;">🧪 Bahan yang dibutuhkan:</p>
+        <div id="craftBahanList"></div>
+        <button type="button" class="small secondary" id="btnCraftAddBahan" style="margin-top:4px;">+ Tambah Bahan</button>
+        <p class="hint" style="margin:10px 0 2px;">✅ Hasil crafting:</p>
+        <div class="row">
+          <input type="text" id="craft_hasilItem" placeholder="Nama item hasil" style="flex:2;">
+          <input type="number" id="craft_hasilQty" placeholder="Qty" value="1" min="1" style="max-width:80px;">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="craft_hasilDesc" placeholder="Deskripsi item hasil">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <select id="craft_hasilTipe" style="flex:1;"></select>
+          <input type="text" id="craft_hasilFormula" placeholder="Formula dadu (opsional, mis. 2d4+2)" style="flex:1;">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <button type="button" class="small" id="btnCraftSaveRecipe" style="flex:1;">💾 Simpan Resep</button>
+          <button type="button" class="small secondary" id="btnCraftResetForm">Batal Edit</button>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:8px; margin-top:10px;">
+        <input type="text" id="craftSearch" placeholder="🔍 Cari nama resep…" style="flex:2;">
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="craftTable">
+          <thead><tr><th>Resep</th><th>Bahan</th><th>Hasil</th><th>Aksi</th></tr></thead>
+          <tbody id="craftTableBody"><tr><td colspan="4" class="hint">Belum ada resep.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /tab-dm-craft -->
+
   <!-- ===== TAB: MUSIK (full width, search) ===== -->
   <div id="tab-dm-music" style="display:none;">
     <div class="panel">
@@ -482,11 +528,26 @@
         <p class="hint" style="margin-bottom:6px;">HP terlihat player. MP &amp; SP hanya terlihat DM.</p>
         <button id="btnRollInitiative" class="small" style="width:100%; margin-bottom:6px;">🎲 Roll Initiative Semua</button>
         <div id="battleList"></div>
-        <div class="row" style="margin-top:8px;">
-          <button id="btnBattlePrev" class="secondary small">‹ Prev</button>
-          <button id="btnBattleNext" class="small">Next ›</button>
+        <div class="row battle-turn-nav" style="margin-top:8px;">
+          <button id="btnBattlePrev" class="secondary">‹ Prev Giliran</button>
+          <button id="btnBattleNext">Next Giliran ›</button>
         </div>
         <button id="btnBattleClear" class="secondary small" style="width:100%; margin-top:6px;">Bersihkan Battle</button>
+      </div>
+
+      <!-- Chat & Roll cepat, versi ringkas khusus di tab Battle biar gak perlu pindah ke Utama -->
+      <div class="panel">
+        <div class="panel-header">💬 Chat &amp; Roll Cepat</div>
+        <p class="hint" style="margin-bottom:6px;">Buat ngobrol/roll roleplay santai selama battle — ini terpisah dari Aksi Roll DM di sebelah, gak nyentuh HP/MP/SP siapa pun. Log sama dengan tab Utama.</p>
+        <div class="dice-quick-row" id="battleDiceQuickRow"></div>
+        <label class="hint" style="display:flex;align-items:center;gap:5px;margin:4px 0;">
+          <input type="checkbox" id="battleRollSecret" style="width:auto;"> Sembunyikan hasil roll dari player
+        </label>
+        <div class="chat-log" id="battleChatLog"></div>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="battleChatInput" placeholder="Ketik pesan… (atau formula dadu mis. 2d4)">
+          <button id="btnBattleSendChat" class="small">Kirim</button>
+        </div>
       </div>
     </div>
     <div>
@@ -649,6 +710,16 @@
         <button id="btnGiveItem" class="small" style="white-space:nowrap;">Kirim</button>
       </div>
       <p class="hint" id="giveItemStatus" style="margin-top:4px;"></p>
+    </div>
+
+    <div class="give-item-box">
+      <label style="margin:0;">✉ Pesan Pribadi ke Player Ini</label>
+      <p class="hint" style="margin:2px 0 4px;">Cuma kamu &amp; player ini yang bisa lihat — cocok buat insight/roll rahasia, godaan lore, atau info yang gak boleh diketahui player lain.</p>
+      <div class="row" style="margin-top:4px;">
+        <input type="text" id="whisper_text" placeholder="Ketik pesan pribadi…" style="flex:2;">
+        <button id="btnSendWhisper" class="small" style="white-space:nowrap;">Kirim</button>
+      </div>
+      <p class="hint" id="whisperStatus" style="margin-top:4px;"></p>
     </div>
 
     <div class="give-item-box">
@@ -847,6 +918,7 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="/socket.io/socket.io.js"></script>
+<script src="/battle-fx.js"></script>
 <script src="/dm.js"></script>
 </body>
 </html>

@@ -102,7 +102,7 @@
   .dialogue-box-inner {
     max-width: 760px; width: 100%; background: var(--navy); border: 2px solid var(--gold);
     border-radius: 10px 10px 0 0; padding: 12px 16px; display: flex; gap: 12px; align-items: flex-start;
-    box-shadow: 0 -4px 16px rgba(0,0,0,.3);
+    box-shadow: 0 -4px 16px rgba(0,0,0,.3); position: relative; padding-bottom: 28px;
   }
   .dialogue-portrait { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold-bright); flex-shrink: 0; display: none; }
   .dialogue-body { flex: 1; }
@@ -157,6 +157,11 @@
       <div class="dialogue-name" id="dialogueNameEl"></div>
       <div class="dialogue-text" id="dialogueTextEl"></div>
     </div>
+    <div class="dialogue-self" id="dialogueSelfChip" title="Kamu sedang mendengarkan sebagai karakter ini">
+      <img id="dialogueSelfPortraitImg" class="dialogue-self-portrait" alt="" style="display:none;">
+      <span id="dialogueSelfPortraitFallback" class="dialogue-self-portrait-fallback">🧑</span>
+      <span class="dialogue-self-name" id="dialogueSelfNameEl"></span>
+    </div>
     <button type="button" class="small secondary dialogue-close" id="btnDialogueClose">✖</button>
   </div>
 </div>
@@ -182,7 +187,15 @@
 
 <div class="sheet sheet-with-musicbar" style="max-width:1500px;">
   <div class="topbar">
-    <h1>📜 <span id="charNameDisplay">Character Sheet</span></h1>
+    <h1>
+      <span class="char-portrait-wrap" id="charPortraitWrap" title="Klik untuk upload portrait karakter">
+        <img id="charPortraitImg" class="char-portrait-img" style="display:none;" alt="Portrait">
+        <span id="charPortraitPlaceholder" class="char-portrait-placeholder">🧑</span>
+        <span class="char-portrait-remove" id="btnRemovePortrait" title="Hapus portrait" style="display:none;">✕</span>
+      </span>
+      📜 <span id="charNameDisplay">Character Sheet</span>
+    </h1>
+    <input type="file" id="portraitUploadFile" accept="image/*" style="display:none;">
     <div class="actions">
       <span class="badge" id="connBadge">menghubungkan…</span>
       <span class="code-badge" id="codeBadge">----</span>
@@ -209,6 +222,7 @@
     <button id="tabBtnStory">📖 Cerita</button>
     <button id="tabBtnCompanion">🐾 Companion</button>
     <button id="tabBtnShop">🛒 Shop</button>
+    <button id="tabBtnCraft">🛠 Crafting</button>
   </div>
 
   <!-- ===== TAB: SHEET ===== -->
@@ -415,7 +429,9 @@
           </div>
           <div class="status-bar-row">
             <label>HP</label>
+            <button type="button" class="stepper-btn" data-target="bt_current_hp" data-step="-1" title="-1">−</button>
             <input type="number" id="bt_current_hp">
+            <button type="button" class="stepper-btn" data-target="bt_current_hp" data-step="1" title="+1">+</button>
             <span class="sep">/</span>
             <input type="number" id="bt_max_hp" readonly>
             <div class="mini-bar-wrap hp"><div class="mini-bar-fill" id="btHpFill"></div></div>
@@ -423,7 +439,9 @@
           </div>
           <div class="status-bar-row">
             <label>MP</label>
+            <button type="button" class="stepper-btn" data-target="bt_mp_current" data-step="-1" title="-1">−</button>
             <input type="number" id="bt_mp_current">
+            <button type="button" class="stepper-btn" data-target="bt_mp_current" data-step="1" title="+1">+</button>
             <span class="sep">/</span>
             <input type="number" id="bt_mp_max" readonly>
             <div class="mini-bar-wrap mp"><div class="mini-bar-fill" id="btMpFill"></div></div>
@@ -431,7 +449,9 @@
           </div>
           <div class="status-bar-row">
             <label>SP</label>
+            <button type="button" class="stepper-btn" data-target="bt_sp_current" data-step="-1" title="-1">−</button>
             <input type="number" id="bt_sp_current">
+            <button type="button" class="stepper-btn" data-target="bt_sp_current" data-step="1" title="+1">+</button>
             <span class="sep">/</span>
             <input type="number" id="bt_sp_max" readonly>
             <div class="mini-bar-wrap sp"><div class="mini-bar-fill" id="btSpFill"></div></div>
@@ -598,10 +618,20 @@
     </div>
   </div><!-- /tab-shop -->
 
+  <!-- ===== TAB: CRAFTING ===== -->
+  <div id="tab-craft" style="display:none;">
+    <div class="panel">
+      <div class="panel-header">🛠 Crafting</div>
+      <p class="hint" style="margin-bottom:8px;">Resep dari DM. Kalau bahan di inventory-mu cukup, tombol Craft bisa dipakai — bahan otomatis kepotong dan hasilnya langsung masuk ke Item Inventory.</p>
+      <div id="craftList"><p class="hint">DM belum menambahkan resep crafting.</p></div>
+    </div>
+  </div><!-- /tab-craft -->
+
 </div><!-- /sheet -->
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="/socket.io/socket.io.js"></script>
+<script src="/battle-fx.js"></script>
 <script src="/character.js"></script>
 </body>
 </html>

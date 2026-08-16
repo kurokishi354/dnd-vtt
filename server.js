@@ -175,6 +175,7 @@ function extractYoutubeId(url) {
 
 function ensureSessionDefaults(session) {
   if (!session.classes) session.classes = {};
+  if (!session.recipes) session.recipes = {};
   if (!session.music) session.music = blankMusic();
   if (!session.music.playback) session.music.playback = blankMusic().playback;
   if (!session.shop) session.shop = { items: {} };
@@ -387,6 +388,7 @@ function sessionStateForDM(session) {
     players: session.players,
     npcs: session.npcs,
     classes: session.classes || {},
+    recipes: session.recipes || {},
     maps: mapTabList(session),
     activeMapId: session.activeMapId,
     map: activeMap(session),
@@ -407,6 +409,7 @@ function sessionStateForPlayer(session, playerId) {
     players: publicPlayerList(session),
     playersList: publicPlayerList(session),
     classes: session.classes || {},
+    recipes: session.recipes || {},
     maps: mapTabList(session),
     activeMapId: session.activeMapId,
     map: activeMap(session),
@@ -415,7 +418,9 @@ function sessionStateForPlayer(session, playerId) {
     music: session.music,
     story: session.story,
     shop: session.shop || { items: {} },
-    log: session.log.filter(e => !e.secret).slice(-100)
+    // Log biasa (!secret) buat semua player, DITAMBAH pesan pribadi (secret + toPlayerId) yang
+    // memang ditujukan ke player ini — biar tetap ada pas dia reconnect/refresh.
+    log: session.log.filter(e => !e.secret || e.toPlayerId === playerId).slice(-100)
   };
 }
 
@@ -800,6 +805,7 @@ io.on('connection', (socket) => {
         en.sp_max = sheet.sp_max ?? en.sp_max;
         en.sp_current = sheet.sp_current ?? en.sp_current;
         en.ac = sheet.ac ?? en.ac;
+        en.portrait = sheet.portrait ?? en.portrait ?? null;
         battleTouched = true;
       }
     });
@@ -1279,6 +1285,110 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true, sheet: player.sheet });
   });
 
+  // === DM: kelola katalog Crafting/Resep sesi (CRUD) ===
+  socket.on('dm:save-recipe', ({ code, recipe }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    if (!recipe || !(recipe.nama || '').trim()) return cb && cb({ ok: false, error: 'Nama resep kosong.' });
+    if (!(recipe.hasil_item || '').trim()) return cb && cb({ ok: false, error: 'Nama hasil crafting kosong.' });
+    const bahan = Array.isArray(recipe.bahan)
+      ? recipe.bahan.filter(b => b && (b.item || '').trim()).map(b => ({ item: (b.item || '').trim(), qty: Math.max(1, parseInt(b.qty, 10) || 1) }))
+      : [];
+    if (!bahan.length) return cb && cb({ ok: false, error: 'Isi minimal 1 bahan.' });
+    if (!recipe.id) recipe.id = genId('rcp');
+    session.recipes[recipe.id] = {
+      id: recipe.id,
+      nama: recipe.nama || '',
+      deskripsi: recipe.deskripsi || '',
+      bahan,
+      hasil_item: (recipe.hasil_item || '').trim(),
+      hasil_qty: Math.max(1, parseInt(recipe.hasil_qty, 10) || 1),
+      hasil_desc: recipe.hasil_desc || '',
+      hasil_tipe: recipe.hasil_tipe || 'misc',
+      hasil_formula: recipe.hasil_formula || ''
+    };
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('recipes-update', session.recipes);
+    cb && cb({ ok: true, recipe: session.recipes[recipe.id] });
+  });
+
+  socket.on('dm:delete-recipe', ({ code, recipeId }) => {
+    const session = sessions[code];
+    if (!session || !session.recipes) return;
+    delete session.recipes[recipeId];
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('recipes-update', session.recipes);
+  });
+
+  // === Player: craft item dari resep — butuh bahan cukup di inventory,
+  // dipotong otomatis, hasil masuk ke slot inventory (nimbun kalau sudah ada stack dari craft yang sama) ===
+  socket.on('player:craft', ({ code, playerId, recipeId }, cb) => {
+    const session = sessions[code];
+    if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    if (session.players[playerId].socketId !== socket.id) return cb && cb({ ok: false, error: 'Tidak diizinkan.' });
+    ensureSessionDefaults(session);
+    const recipe = session.recipes[recipeId];
+    if (!recipe || !Array.isArray(recipe.bahan) || !recipe.bahan.length) return cb && cb({ ok: false, error: 'Resep tidak ditemukan.' });
+
+    const player = session.players[playerId];
+    if (!Array.isArray(player.sheet.inventory)) player.sheet.inventory = [];
+    const inv = player.sheet.inventory;
+
+    // Cek semua bahan cukup dulu (cocokkan nama item, case-insensitive, jumlahkan lintas slot)
+    for (const b of recipe.bahan) {
+      const have = inv.filter(it => (it.item || '').trim().toLowerCase() === b.item.toLowerCase())
+        .reduce((sum, it) => sum + (parseInt(it.qty, 10) || 1), 0);
+      if (have < b.qty) return cb && cb({ ok: false, error: `Bahan kurang: ${b.item} (butuh ${b.qty}, punya ${have}).` });
+    }
+
+    // Cek slot cukup buat hasil SEBELUM motong bahan (biar kalau gagal, bahan gak kepotong sia-sia)
+    const maxSlots = invMaxSlotsForPlayer(player);
+    const hasExistingStack = inv.some(it => it.item === recipe.hasil_item && it.fromCraft && !it.checked);
+    if (!hasExistingStack && inv.length >= maxSlots) {
+      return cb && cb({ ok: false, error: `Inventory penuh (maks ${maxSlots} slot). Kosongkan slot dulu sebelum crafting.` });
+    }
+
+    // Potong bahan dari slot yang cocok (boleh dari beberapa slot sekaligus)
+    recipe.bahan.forEach(b => {
+      let remaining = b.qty;
+      for (let i = inv.length - 1; i >= 0 && remaining > 0; i--) {
+        const it = inv[i];
+        if ((it.item || '').trim().toLowerCase() !== b.item.toLowerCase()) continue;
+        const qty = parseInt(it.qty, 10) || 1;
+        if (qty <= remaining) { remaining -= qty; inv.splice(i, 1); }
+        else { it.qty = qty - remaining; remaining = 0; }
+      }
+    });
+
+    // Tambah hasil craft (numpuk ke stack "dari craft" yang sama kalau ada)
+    let existing = inv.find(it => it.item === recipe.hasil_item && it.fromCraft && !it.checked);
+    if (existing) {
+      existing.qty = (parseInt(existing.qty, 10) || 1) + recipe.hasil_qty;
+    } else {
+      inv.push({
+        checked: false, item: recipe.hasil_item, desc: recipe.hasil_desc || '',
+        type: recipe.hasil_tipe || 'misc', formula: recipe.hasil_formula || '',
+        qty: recipe.hasil_qty, fromCraft: true
+      });
+    }
+
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId, sheet: player.sheet });
+    io.to('dm-' + code).emit('players-update', publicPlayerList(session));
+
+    const logEntry = {
+      id: genId('log'), from: 'Sistem',
+      text: `🛠 ${player.sheet.nama_karakter || player.name} berhasil crafting ${recipe.hasil_item}${recipe.hasil_qty > 1 ? ' x' + recipe.hasil_qty : ''} (${recipe.nama}).`,
+      type: 'system', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    io.to('room-' + code).emit('chat:new', logEntry);
+
+    cb && cb({ ok: true, sheet: player.sheet });
+  });
+
   // === DM: catatan sesi (biar tidak lupa apa yang terjadi) ===
   socket.on('dm:update-notes', ({ code, notes }) => {
     const session = sessions[code];
@@ -1513,6 +1623,7 @@ io.on('connection', (socket) => {
       ac: entry.ac ?? '',
       refType: entry.refType || null, // 'player' | 'npc' | null
       refId: entry.refId || null,
+      portrait: entry.portrait || null, // portrait kecil karakter, kalau ada
       elements: entry.elements || {}, // elemental atribut (dari class_trait NPC)
       conditions: [], // status conditions aktif
       buffs: Array.isArray(entry.buffs) ? entry.buffs : [] // DOT/HEAL/buff untuk NPC/ally/enemy
@@ -2339,6 +2450,29 @@ io.on('connection', (socket) => {
     } else {
       io.to('room-' + code).emit('chat:new', entry);
     }
+  });
+
+  // === DM: pesan pribadi ke 1 player — cuma DM & player itu yang lihat, gak masuk ke log ===
+  // === umum player lain. Tersimpan sebagai entry secret+toPlayerId biar tetap ada pas player ===
+  // === reconnect (lihat sessionStateForPlayer di atas).
+  socket.on('dm:whisper', ({ code, playerId, text }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false, error: 'Cuma DM yang bisa kirim pesan pribadi.' });
+    const player = session.players[playerId];
+    if (!player) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    const msg = (text || '').trim();
+    if (!msg) return cb && cb({ ok: false, error: 'Pesan kosong.' });
+    const entry = {
+      id: genId('log'), from: `DM ➜ ${player.sheet.nama_karakter || player.name} (privat)`,
+      text: msg, type: 'whisper', ts: Date.now(), secret: true, toPlayerId: playerId
+    };
+    session.log.push(entry);
+    if (session.log.length > 300) session.log.shift();
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('chat:new', entry);
+    if (player.socketId) io.to(player.socketId).emit('chat:new', entry);
+    cb && cb({ ok: true });
   });
 
   // === DM: perlihatkan roll rahasia yang sudah dilempar ke semua player ===

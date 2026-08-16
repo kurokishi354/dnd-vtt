@@ -11,7 +11,7 @@ const ELEMENT_KEYS = ['fire','ice','lightning','wind','earth','water','poison','
 
 let state = {
   players: {}, playersList: [],
-  npcs: {}, classes: {}, map: {}, maps: {},
+  npcs: {}, classes: {}, recipes: {}, map: {}, maps: {},
   tokens: {}, battle: { entries: {}, turn: { activeId: null, round: 1 } },
   music: { tracks: {}, playback: { trackId: null, isPlaying: false, startTs: 0, position: 0, volume: 0.7, loop: false } },
   story: { scene: { title:'', desc:'', imageUrl:null, active:false }, dialogue: { npcName:'', npcPortrait:null, text:'', active:false }, quests: {} },
@@ -21,20 +21,22 @@ let currentMapTabId = 'main';
 
 // =============================== TABS ==================================
 function showDmTab(name) {
-  ['main','players','npc','classes','shop','music','story','battle','map'].forEach(t => {
+  ['main','players','npc','classes','shop','craft','music','story','battle','map'].forEach(t => {
     document.getElementById('tab-dm-' + t).style.display = t === name ? '' : 'none';
   });
   document.querySelectorAll('.page-tabs button').forEach(b => b.classList.remove('active'));
-  const btnMap = { main:'tabBtnDmMain', players:'tabBtnDmPlayers', npc:'tabBtnDmNpc', classes:'tabBtnDmClasses', shop:'tabBtnDmShop', music:'tabBtnDmMusic', story:'tabBtnDmStory', battle:'tabBtnDmBattle', map:'tabBtnDmMap' };
+  const btnMap = { main:'tabBtnDmMain', players:'tabBtnDmPlayers', npc:'tabBtnDmNpc', classes:'tabBtnDmClasses', shop:'tabBtnDmShop', craft:'tabBtnDmCraft', music:'tabBtnDmMusic', story:'tabBtnDmStory', battle:'tabBtnDmBattle', map:'tabBtnDmMap' };
   const btn = document.getElementById(btnMap[name]); if (btn) btn.classList.add('active');
   if (name === 'map') { renderMapTabs(); renderMap(); }
   if (name === 'story') { renderStory(); }
+  if (name === 'craft') { renderCraftTable(); }
 }
 document.getElementById('tabBtnDmMain').addEventListener('click', () => showDmTab('main'));
 document.getElementById('tabBtnDmPlayers').addEventListener('click', () => showDmTab('players'));
 document.getElementById('tabBtnDmNpc').addEventListener('click', () => showDmTab('npc'));
 document.getElementById('tabBtnDmClasses').addEventListener('click', () => showDmTab('classes'));
 document.getElementById('tabBtnDmShop').addEventListener('click', () => showDmTab('shop'));
+document.getElementById('tabBtnDmCraft').addEventListener('click', () => showDmTab('craft'));
 document.getElementById('tabBtnDmMusic').addEventListener('click', () => showDmTab('music'));
 document.getElementById('tabBtnDmStory').addEventListener('click', () => showDmTab('story'));
 document.getElementById('tabBtnDmBattle').addEventListener('click', () => showDmTab('battle'));
@@ -109,6 +111,7 @@ socket.on('players-update', (players) => {
 let openPlayerId = null;
 socket.on('sheet-updated', ({ playerId, sheet }) => {
   if (state.players[playerId]) state.players[playerId].sheet = sheet;
+  renderPlayers();
   if (playerId === openPlayerId) {
     document.getElementById('playerModalBody').innerHTML = renderSheetReadonly(sheet);
     document.getElementById('currentGoldLabel').textContent = sheet.gold || '0';
@@ -125,6 +128,10 @@ socket.on('player-online', ({ id, online }) => {
   renderPlayers();
 });
 
+// Nyimpen persentase bar terakhir per player, buat deteksi kena damage/heal
+// tiap kali player-card dirender ulang (elemen-nya di-rebuild total tiap render,
+// jadi transisi width bawaan gak jalan sendiri — makanya di-flash manual di sini).
+const prevPlayerBarPct = {};
 function renderPlayers() {
   let list = (state.playersList || []).slice();
   const q = (document.getElementById('playerSearch')?.value || '').toLowerCase().trim();
@@ -151,8 +158,12 @@ function renderPlayers() {
       return `<div class="pc-bar-row"><label>${label}</label><div class="mini-bar-wrap ${cls}"><div class="mini-bar-fill" style="width:${pct}%;"></div></div><span class="pc-bar-val">${isNaN(c)?0:c}/${m||0}</span></div>`;
     };
     const conds = (sheet.condition || []).filter(c => c && c !== 'Normal');
+    const avatarHtml = sheet.portrait
+      ? `<img src="${sheet.portrait}" alt="" class="pc-avatar-img">`
+      : `<span class="pc-avatar-fallback">${escapeHtml((p.nama_karakter || p.name || '?').slice(0, 1).toUpperCase())}</span>`;
     return `<div class="player-card" data-id="${p.id}">
       <div class="player-card-head">
+        <span class="pc-avatar">${avatarHtml}</span>
         <span class="badge ${p.online ? 'online' : 'offline'}">${p.online ? '●' : '○'}</span>
         <span class="pc-name">${escapeHtml(p.nama_karakter || p.name)}</span>
         <button type="button" class="player-quick-delete" title="Hapus player" data-id="${p.id}" style="border:none; background:transparent; color:var(--crimson-bright); font-size:18px; cursor:pointer;">×</button>
@@ -173,6 +184,16 @@ function renderPlayers() {
   box.querySelectorAll('.player-quick-delete').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); confirmDeletePlayer(btn.dataset.id); };
   });
+  box.querySelectorAll('.player-card').forEach(card => {
+    const pid = card.dataset.id;
+    card.querySelectorAll('.mini-bar-fill').forEach((fillEl, idx) => {
+      const key = pid + ':' + ['hp', 'mp', 'sp'][idx];
+      const pct = parseFloat(fillEl.style.width) || 0;
+      const prevPct = prevPlayerBarPct[key];
+      if (prevPct !== undefined && prevPct !== pct && window.BattleFX) window.BattleFX.flashBar(fillEl, pct > prevPct);
+      prevPlayerBarPct[key] = pct;
+    });
+  });
 }
 
 const INV_BASE_SLOTS_DM = 10;
@@ -184,6 +205,8 @@ function openPlayerModal(playerId) {
   document.getElementById('playerModalTitle').textContent = escapeHtml(pData?.nama_karakter || pData?.name || 'Player');
   document.getElementById('giveItem_playerId').value = playerId;
   document.getElementById('currentGoldLabel').textContent = sheet.gold || '0';
+  document.getElementById('whisper_text').value = '';
+  document.getElementById('whisperStatus').textContent = '';
   const surv = sheet.survival || { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
   document.getElementById('currentSurvivalLabel').textContent = `🍖 ${surv.hunger}/${surv.hunger_max} · 💧 ${surv.thirst}/${surv.thirst_max}`;
   document.getElementById('setHunger_amount').value = '';
@@ -243,6 +266,17 @@ document.getElementById('btnGiveItem').onclick = () => {
     document.getElementById('giveItemStatus').textContent = res?.ok ? `✓ Item dikirim.` : (res?.error || 'Gagal.');
   });
 };
+document.getElementById('btnSendWhisper').onclick = () => {
+  const playerId = document.getElementById('giveItem_playerId').value;
+  const input = document.getElementById('whisper_text');
+  const text = input.value.trim(); if (!text) return;
+  socket.emit('dm:whisper', { code: CODE, playerId, text }, (res) => {
+    const statusEl = document.getElementById('whisperStatus');
+    if (res?.ok) { statusEl.textContent = '✓ Terkirim (privat).'; input.value = ''; }
+    else statusEl.textContent = res?.error || 'Gagal.';
+  });
+};
+document.getElementById('whisper_text').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btnSendWhisper').click(); });
 document.getElementById('btnGiveGold').onclick = () => {
   const playerId = document.getElementById('giveItem_playerId').value;
   const amount = parseFloat(document.getElementById('giveGold_amount').value);
@@ -742,8 +776,9 @@ window.addEventListener('resize', () => { if (document.getElementById('tab-dm-ma
 
 function cellFromEvent(e) {
   const rect = mapInner.getBoundingClientRect();
-  const x = (e.clientX - rect.left) / rect.width;
-  const y = (e.clientY - rect.top) / rect.height;
+  const cx = e.clientX, cy = e.clientY;
+  const x = (cx - rect.left) / rect.width;
+  const y = (cy - rect.top) / rect.height;
   if (x < 0 || x > 1 || y < 0 || y > 1) return null;
   return { c: Math.floor(x * FOG_COLS), r: Math.floor(y * FOG_ROWS) };
 }
@@ -772,9 +807,14 @@ document.getElementById('btnFogBrush').addEventListener('click', () => {
   btn.textContent = fogBrushActive ? '🖌 Kuas Fog: ON' : '🖌 Kuas Fog: OFF';
   btn.classList.toggle('active', fogBrushActive);
   mapWrap.style.cursor = fogBrushActive ? 'crosshair' : 'grab';
+  // toggle touch-action:none di CSS supaya nyapu kabut pakai jari di HP
+  // gak ke-intercept sama gesture scroll bawaan browser
+  mapWrap.classList.toggle('fog-brush-active', fogBrushActive);
 });
 
-mapWrap.addEventListener('mousedown', (e) => {
+// Pointer Events (bukan mouse events) supaya kuas fog jalan juga lewat
+// sentuhan jari di HP/tablet, bukan cuma mouse di desktop.
+mapWrap.addEventListener('pointerdown', (e) => {
   if (!fogBrushActive || e.target.closest('.token')) return;
   e.preventDefault();
   fogPainting = true;
@@ -782,8 +822,8 @@ mapWrap.addEventListener('mousedown', (e) => {
   fogPaintedThisStroke = new Set();
   paintFogAt(e);
 });
-window.addEventListener('mousemove', (e) => { if (fogPainting) paintFogAt(e); });
-window.addEventListener('mouseup', () => {
+window.addEventListener('pointermove', (e) => { if (fogPainting) paintFogAt(e); });
+window.addEventListener('pointerup', () => {
   if (!fogPainting) return;
   fogPainting = false;
   if (fogPaintedThisStroke.size) {
@@ -791,6 +831,7 @@ window.addEventListener('mouseup', () => {
   }
   fogPaintedThisStroke = new Set();
 });
+window.addEventListener('pointercancel', () => { fogPainting = false; fogPaintedThisStroke = new Set(); });
 
 document.getElementById('btnFogRevealAll').addEventListener('click', () => {
   const cells = [];
@@ -919,22 +960,34 @@ document.getElementById('btnAddToken').onclick = () => {
 };
 
 let draggingTokenId = null;
-window.addEventListener('mousemove', (e) => {
+let dmDragStartX = 0, dmDragStartY = 0, dmDragMoved = false, dmLongPressTimer = null;
+const LONG_PRESS_MS = 550, LONG_PRESS_MOVE_TOLERANCE = 8;
+
+// Pointer Events dipakai (bukan mouse events) supaya drag token jalan juga
+// lewat sentuhan jari di HP/tablet, bukan cuma mouse di desktop.
+window.addEventListener('pointermove', (e) => {
   if (!draggingTokenId) return;
+  if (!dmDragMoved) {
+    const dx = e.clientX - dmDragStartX, dy = e.clientY - dmDragStartY;
+    if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_TOLERANCE) { dmDragMoved = true; clearTimeout(dmLongPressTimer); }
+  }
   const el = mapInner.querySelector(`.token[data-id="${draggingTokenId}"]`); if (!el) return;
   const rect = mapInner.getBoundingClientRect();
   const x = Math.max(0, Math.min(100, (e.clientX - rect.left) / rect.width * 100));
   const y = Math.max(0, Math.min(100, (e.clientY - rect.top) / rect.height * 100));
   el.style.left = x + '%'; el.style.top = y + '%';
 });
-window.addEventListener('mouseup', (e) => {
+window.addEventListener('pointerup', (e) => {
+  clearTimeout(dmLongPressTimer);
   if (!draggingTokenId) return;
   const id = draggingTokenId; draggingTokenId = null;
+  if (!dmDragMoved) return; // dianggap tap/long-press, bukan drag — jangan kirim token:move
   const rect = mapInner.getBoundingClientRect();
   const x = Math.max(0, Math.min(100, (e.clientX - rect.left) / rect.width * 100));
   const y = Math.max(0, Math.min(100, (e.clientY - rect.top) / rect.height * 100));
   socket.emit('token:move', { code: CODE, tokenId: id, x, y });
 });
+window.addEventListener('pointercancel', () => { clearTimeout(dmLongPressTimer); draggingTokenId = null; });
 
 function renderTokens() {
   mapInner.querySelectorAll('.token').forEach(el => el.remove());
@@ -966,7 +1019,24 @@ function renderTokens() {
     el.appendChild(circle);
 
     el.title = (tok.label || '') + (tok.ownerId ? ' (milik player)' : '');
-    el.addEventListener('mousedown', (e) => { draggingTokenId = tok.id; e.preventDefault(); e.stopPropagation(); });
+    // Desktop: klik-kanan buat hapus (contextmenu). HP/tablet: contextmenu gak
+    // reliable disentuh, jadi tekan-tahan (long-press) tanpa geser = hapus juga.
+    el.addEventListener('pointerdown', (e) => {
+      draggingTokenId = tok.id;
+      dmDragStartX = e.clientX; dmDragStartY = e.clientY; dmDragMoved = false;
+      e.preventDefault(); e.stopPropagation();
+      if (e.pointerType === 'touch') {
+        clearTimeout(dmLongPressTimer);
+        dmLongPressTimer = setTimeout(() => {
+          if (draggingTokenId === tok.id && !dmDragMoved) {
+            draggingTokenId = null;
+            if (confirm('Hapus token "' + (tok.label || '') + '"?')) {
+              socket.emit('token:remove', { code: CODE, tokenId: tok.id });
+            }
+          }
+        }, LONG_PRESS_MS);
+      }
+    });
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (confirm('Hapus token "' + (tok.label || '') + '"?')) {
@@ -978,7 +1048,13 @@ function renderTokens() {
 }
 
 // =============================== BATTLE ================================
-socket.on('battle-updated', (battle) => { state.battle = battle; renderBattle(); });
+socket.on('battle-updated', (battle) => {
+  const prevEntries = (state.battle && state.battle.entries) || {};
+  const prevActiveId = state.battle && state.battle.turn && state.battle.turn.activeId;
+  state.battle = battle;
+  renderBattle();
+  if (window.BattleFX) window.BattleFX.processBattleUpdate({ prevEntries, battle, mapInnerEl: mapInner, prevActiveId });
+});
 
 function sortedBattle() {
   const entries = Object.values((state.battle && state.battle.entries) || {});
@@ -1007,6 +1083,15 @@ function renderEntryBuffsHtml(e) {
     <button type="button" class="secondary small" data-baddbuff style="margin-top:2px;">+ Tambah Efek</button>`;
 }
 
+function statStepperHtml(field, ro, dir) {
+  // Tombol −/+ cepat buat HP/MP/SP — ngedit lewat tap jauh lebih gampang di HP
+  // daripada buka keyboard angka & ketik manual tiap kali kena damage.
+  if (ro) return '';
+  return dir === 'minus'
+    ? `<button type="button" class="stepper-btn" data-f="${field}" data-step="-1" title="-1">−</button>`
+    : `<button type="button" class="stepper-btn" data-f="${field}" data-step="1" title="+1">+</button>`;
+}
+
 function renderBattle() {
   const turn = (state.battle && state.battle.turn) || { activeId: null, round: 1 };
   document.getElementById('roundBadge').textContent = 'Round ' + (turn.round || 1);
@@ -1031,20 +1116,20 @@ function renderBattle() {
         <span class="hint" style="color:var(--crimson-bright);">💀 Sekarat: ${ds.success}✓ / ${ds.fail}✗</span>
         <button type="button" class="small secondary death-save-btn">🎲 Death Save</button>
       </div>` : '';
+    const avatarHtml = e.portrait ? `<img src="${e.portrait}" alt="" class="b-avatar-img">` : '';
     return `<div class="battle-row ${e.id===turn.activeId?'active':''}" data-id="${e.id}">
       <div class="roll-num">${e.roll??'-'}</div>
       <div class="b-info">
-        <div class="b-name">${escapeHtml(e.name)} <span class="type-pill ${e.type}">${e.type}</span>${isPc?' <span class="hint">(pantau saja)</span>':''}</div>
+        <div class="b-name-row">${avatarHtml}<div class="b-name">${escapeHtml(e.name)} <span class="type-pill ${e.type}">${e.type}</span>${isPc?' <span class="hint">(pantau saja)</span>':''}</div>${e.id===turn.activeId?'<span class="turn-flag">▶ GILIRAN</span>':''}</div>
         ${elemStr?`<div style="margin-top:2px;">${elemStr}</div>`:''}
         ${condStr?`<div style="margin-top:2px;">${condStr}</div>`:''}
-        <div class="row" style="margin:3px 0 0;"><span class="stat-label">HP</span><input type="number" data-f="hp_current" value="${e.hp_current??''}" placeholder="now" ${ro}><span class="hint">/</span><input type="number" data-f="hp_max" value="${e.hp_max??''}" placeholder="max" ${ro}></div>
-        <div class="row" style="margin:3px 0 0;"><span class="stat-label">MP</span><input type="number" data-f="mp_current" value="${e.mp_current??''}" placeholder="now" ${ro}><span class="hint">/</span><input type="number" data-f="mp_max" value="${e.mp_max??''}" placeholder="max" ${ro}></div>
-        <div class="row" style="margin:3px 0 0;"><span class="stat-label">SP</span><input type="number" data-f="sp_current" value="${e.sp_current??''}" placeholder="now" ${ro}><span class="hint">/</span><input type="number" data-f="sp_max" value="${e.sp_max??''}" placeholder="max" ${ro}></div>
-        <div class="row" style="margin:3px 0 0;"><span class="stat-label">AC</span><input type="number" data-f="ac" value="${e.ac??''}" placeholder="AC" ${ro}></div>
+        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">HP</span>${statStepperHtml('hp_current', ro, 'minus')}<input type="number" data-f="hp_current" value="${e.hp_current??''}" placeholder="now" ${ro}>${statStepperHtml('hp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="hp_max" value="${e.hp_max??''}" placeholder="max" ${ro}></div>
+        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">MP</span>${statStepperHtml('mp_current', ro, 'minus')}<input type="number" data-f="mp_current" value="${e.mp_current??''}" placeholder="now" ${ro}>${statStepperHtml('mp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="mp_max" value="${e.mp_max??''}" placeholder="max" ${ro}></div>
+        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">SP</span>${statStepperHtml('sp_current', ro, 'minus')}<input type="number" data-f="sp_current" value="${e.sp_current??''}" placeholder="now" ${ro}>${statStepperHtml('sp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="sp_max" value="${e.sp_max??''}" placeholder="max" ${ro}></div>
+        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">AC</span><input type="number" data-f="ac" value="${e.ac??''}" placeholder="AC" ${ro}></div>
         ${deathSaveBlock}
         ${!isPc ? renderEntryBuffsHtml(e) : ''}
       </div>
-      ${e.id===turn.activeId?'<span class="turn-flag">GILIRAN</span>':''}
       <button type="button" class="row-remove" title="Hapus dari battle">×</button>
     </div>`;
   }).join('');
@@ -1052,6 +1137,15 @@ function renderBattle() {
     const id = row.dataset.id;
     row.querySelectorAll('input:not([readonly])').forEach(inp => {
       inp.addEventListener('change', e => { socket.emit('dm:battle-update', { code: CODE, id, patch: { [e.target.dataset.f]: e.target.value } }); });
+    });
+    row.querySelectorAll('.stepper-btn:not([disabled])').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const input = btn.closest('.stat-row').querySelector(`input[data-f="${btn.dataset.f}"]`);
+        if (!input || input.readOnly) return;
+        const next = Math.max(0, (parseFloat(input.value) || 0) + parseFloat(btn.dataset.step));
+        input.value = next;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
     });
     row.querySelector('.row-remove').onclick = () => socket.emit('dm:battle-remove', { code: CODE, id });
     const dsBtn = row.querySelector('.death-save-btn');
@@ -1248,7 +1342,7 @@ document.getElementById('btnBattleAdd').onclick = () => {
     const p = (state.playersList||[]).find(p=>p.id===id); if (!p) return alert('Pilih player.');
     const full = (state.players||{})[id]||{};
     const sheet = full.sheet||{};
-    entry = { name: p.nama_karakter||p.name, type, roll, hp_max: hpMax||p.max_hp, hp_current: hpMax||p.current_hp, mp_max: mpMax||sheet.mp_max, mp_current: mpMax||sheet.mp_current, sp_max: spMax||sheet.sp_max, sp_current: spMax||sheet.sp_current, ac: ac||sheet.ac, initiative: sheet.initiative || 0, refType:'player', refId: id };
+    entry = { name: p.nama_karakter||p.name, type, roll, hp_max: hpMax||p.max_hp, hp_current: hpMax||p.current_hp, mp_max: mpMax||sheet.mp_max, mp_current: mpMax||sheet.mp_current, sp_max: spMax||sheet.sp_max, sp_current: spMax||sheet.sp_current, ac: ac||sheet.ac, initiative: sheet.initiative || 0, refType:'player', refId: id, portrait: sheet.portrait || null };
   } else {
     const id = document.getElementById('battleSourceRef').value;
     const n = (state.npcs||{})[id]; if (!n) return alert('Pilih NPC.');
@@ -1355,11 +1449,14 @@ socket.on('chat:revealed', (entry) => {
 });
 
 const STORY_LOG_TYPES = ['narrative','scene','dialogue','quest','handout'];
+// Log & Dice muncul di 2 tempat (tab Utama & tab Battle) — sama persis datanya, jadi render ke semua
+// box yang ada di halaman (kalau salah satu gak ada, misal tab Battle belum ke-render, otomatis dilewati).
+const CHAT_LOG_BOX_IDS = ['chatLog', 'battleChatLog'];
 function renderLog() {
-  const box = document.getElementById('chatLog');
-  box.innerHTML = state.log.map(e => {
+  const html = state.log.map(e => {
     let cls;
     if (STORY_LOG_TYPES.includes(e.type)) cls = e.type === 'quest' ? 'quest' : (e.type === 'handout' ? 'handout' : (e.type === 'dialogue' ? 'dialogue' : 'narrative'));
+    else if (e.type==='whisper') cls='whisper';
     else if (e.from==='DM'||e.from==='dm') cls='dm';
     else if (e.from==='Sistema'||e.from==='system'||e.type==='system') cls='system';
     else if (e.type==='roll') cls='roll';
@@ -1370,23 +1467,35 @@ function renderLog() {
       <button type="button" class="star-btn" data-id="${e.id}" title="Tandai penting untuk Recap">${e.starred?'⭐':'☆'}</button>
       <span class="from">${escapeHtml(e.from)}:</span> ${escapeHtml(e.text)}
       ${e.imageUrl?`<div><img src="${e.imageUrl}" style="max-width:180px; border-radius:5px; border:1px solid var(--gold); margin-top:4px;"></div>`:''}
-      ${e.secret?`<span class="secret-badge">🔒 rahasia</span> <button type="button" class="small secondary reveal-btn" data-id="${e.id}">👁 Perlihatkan</button>`:''}
+      ${e.secret&&e.type!=='whisper'?`<span class="secret-badge">🔒 rahasia</span> <button type="button" class="small secondary reveal-btn" data-id="${e.id}">👁 Perlihatkan</button>`:''}
+      ${e.type==='whisper'?`<span class="secret-badge">✉ privat</span>`:''}
       ${e.ts?`<span class="ts">${new Date(e.ts).toLocaleTimeString()}</span>`:''}
     </div>`;
   }).join('')||'<p class="hint">Belum ada log.</p>';
-  box.scrollTop = box.scrollHeight;
-  box.querySelectorAll('.reveal-btn').forEach(btn => { btn.onclick=()=>socket.emit('dm:reveal-roll',{code:CODE,id:btn.dataset.id}); });
-  box.querySelectorAll('.star-btn').forEach(btn => { btn.onclick=()=>{
-    const entry = state.log.find(e=>e.id===btn.dataset.id); if (!entry) return;
-    socket.emit('dm:log-star',{code:CODE,id:entry.id,starred:!entry.starred});
-  }; });
+  CHAT_LOG_BOX_IDS.forEach(id => {
+    const box = document.getElementById(id);
+    if (!box) return;
+    box.innerHTML = html;
+    box.scrollTop = box.scrollHeight;
+    box.querySelectorAll('.reveal-btn').forEach(btn => { btn.onclick=()=>socket.emit('dm:reveal-roll',{code:CODE,id:btn.dataset.id}); });
+    box.querySelectorAll('.star-btn').forEach(btn => { btn.onclick=()=>{
+      const entry = state.log.find(e=>e.id===btn.dataset.id); if (!entry) return;
+      socket.emit('dm:log-star',{code:CODE,id:entry.id,starred:!entry.starred});
+    }; });
+  });
 }
 
 const DICE_TYPES = [4,6,8,10,12,20,100];
+// Tiap dice-quick-row punya checkbox "sembunyikan roll" sendiri (dmRollSecret di Utama,
+// battleRollSecret di tab Battle) — dipetakan di sini biar tombol dadu di masing-masing pakai punya sendiri.
+const DICE_QUICK_ROW_IDS = { dmDiceQuickRow: 'dmRollSecret', battleDiceQuickRow: 'battleRollSecret' };
 function renderDmDiceButtons() {
-  const box = document.getElementById('dmDiceQuickRow');
-  box.innerHTML = DICE_TYPES.map(d=>`<button type="button" class="dice-btn" data-sides="${d}">d${d}</button>`).join('');
-  box.querySelectorAll('.dice-btn').forEach(btn => { btn.onclick=()=>rollAndSend('1d'+btn.dataset.sides); });
+  Object.entries(DICE_QUICK_ROW_IDS).forEach(([boxId, secretId]) => {
+    const box = document.getElementById(boxId);
+    if (!box) return;
+    box.innerHTML = DICE_TYPES.map(d=>`<button type="button" class="dice-btn" data-sides="${d}">d${d}</button>`).join('');
+    box.querySelectorAll('.dice-btn').forEach(btn => { btn.onclick=()=>rollAndSend('1d'+btn.dataset.sides, secretId); });
+  });
 }
 renderDmDiceButtons();
 
@@ -1408,20 +1517,25 @@ document.getElementById('btnExportLog').onclick = () => {
 document.getElementById('btnBattleStatsReset').onclick = () => {
   if (confirm('Reset statistik hit/miss/crit battle?')) socket.emit('dm:battle-reset-stats', { code: CODE });
 };
-document.getElementById('btnSendChat').onclick = sendChat;
-document.getElementById('chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat(); });
+document.getElementById('btnSendChat').onclick = () => sendChat('chatInput', 'dmRollSecret');
+document.getElementById('chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat('chatInput', 'dmRollSecret'); });
+document.getElementById('btnBattleSendChat').onclick = () => sendChat('battleChatInput', 'battleRollSecret');
+document.getElementById('battleChatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat('battleChatInput', 'battleRollSecret'); });
 
 const DICE_FORMULA_RE = /^\d*d\d+([+-]\d+)?$/i;
-function sendChat() {
-  const input = document.getElementById('chatInput'); const text = input.value.trim(); if (!text) return;
-  if (text.startsWith('/roll')) rollAndSend(text.replace('/roll','').trim()||'1d20');
-  else if (DICE_FORMULA_RE.test(text)) rollAndSend(text);
+// inputId/secretCheckboxId dipisah biar panel Log&Dice di tab Utama sama panel Chat&Roll di tab
+// Battle bisa dipakai bareng tanpa rebutan elemen — keduanya ngirim ke log yang sama persis.
+function sendChat(inputId, secretCheckboxId) {
+  const input = document.getElementById(inputId); const text = input.value.trim(); if (!text) return;
+  if (text.startsWith('/roll')) rollAndSend(text.replace('/roll','').trim()||'1d20', secretCheckboxId);
+  else if (DICE_FORMULA_RE.test(text)) rollAndSend(text, secretCheckboxId);
   else socket.emit('chat:send',{code:CODE,from:'DM',text,type:'chat'});
   input.value='';
 }
-function rollAndSend(formula) {
+function rollAndSend(formula, secretCheckboxId) {
   const result = rollDice(formula);
-  const secret = document.getElementById('dmRollSecret').checked;
+  const secretBox = document.getElementById(secretCheckboxId || 'dmRollSecret');
+  const secret = secretBox ? secretBox.checked : false;
   socket.emit('chat:send',{code:CODE,from:'DM',text:`${formula} = ${result}`,type:'roll',secret});
 }
 function rollDice(formula) {
@@ -1512,6 +1626,85 @@ document.getElementById('btnShopSaveItem').onclick=()=>{
   socket.emit('dm:shop-save-item',{code:CODE,item},(res)=>{ if(!res?.ok) alert(res?.error||'Gagal.'); else loadShopItemToForm(null); });
 };
 document.getElementById('btnShopClear').onclick=()=>{ if(confirm('Kosongkan semua item toko?')) socket.emit('dm:shop-clear',{code:CODE}); };
+
+// =============================== CRAFTING (DM: kelola resep) ===========
+socket.on('recipes-update', (recipes) => { state.recipes = recipes; if (document.getElementById('tab-dm-craft').style.display !== 'none') renderCraftTable(); });
+
+(function initCraftHasilTipeSelect(){
+  const sel = document.getElementById('craft_hasilTipe'); if (!sel) return;
+  sel.innerHTML = SHOP_EFEK_TIPES.map(([k,label])=>`<option value="${k}">${label}</option>`).join('');
+})();
+
+let craftBahanState = []; // [{item, qty}] — bahan yang lagi diedit di form
+function renderCraftBahanList() {
+  const box = document.getElementById('craftBahanList'); if (!box) return;
+  if (!craftBahanState.length) { box.innerHTML = '<p class="hint">Belum ada bahan. Klik "+ Tambah Bahan".</p>'; return; }
+  box.innerHTML = craftBahanState.map((b, i) => `
+    <div class="row" data-idx="${i}" style="margin-top:4px; align-items:center;">
+      <input type="text" data-f="item" placeholder="Nama item bahan (cocok persis nama di inventory)" value="${escapeAttr(b.item)}" style="flex:2;">
+      <input type="number" data-f="qty" min="1" placeholder="Qty" value="${b.qty || 1}" style="max-width:70px;">
+      <button type="button" class="small danger craft-bahan-remove">×</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-idx]').forEach(row => {
+    const idx = parseInt(row.dataset.idx, 10);
+    row.querySelector('[data-f="item"]').addEventListener('input', e => { craftBahanState[idx].item = e.target.value; });
+    row.querySelector('[data-f="qty"]').addEventListener('input', e => { craftBahanState[idx].qty = parseInt(e.target.value, 10) || 1; });
+    row.querySelector('.craft-bahan-remove').addEventListener('click', () => { craftBahanState.splice(idx, 1); renderCraftBahanList(); });
+  });
+}
+document.getElementById('btnCraftAddBahan').onclick = () => { craftBahanState.push({ item: '', qty: 1 }); renderCraftBahanList(); };
+
+function renderCraftTable() {
+  const box = document.getElementById('craftTableBody'); if (!box) return;
+  let list = Object.values(state.recipes || {});
+  const q = (document.getElementById('craftSearch')?.value || '').toLowerCase().trim();
+  if (q) list = list.filter(r => (r.nama||'').toLowerCase().includes(q) || (r.hasil_item||'').toLowerCase().includes(q));
+  list.sort((a,b) => (a.nama||'').localeCompare(b.nama||''));
+  if (!list.length) { box.innerHTML = `<tr><td colspan="4" class="hint">${q ? 'Tidak ada resep yang cocok.' : 'Belum ada resep.'}</td></tr>`; return; }
+  box.innerHTML = list.map(r => {
+    const bahanText = (r.bahan||[]).map(b => `${escapeHtml(b.item)} x${b.qty}`).join(', ') || '-';
+    const hasilText = `${escapeHtml(r.hasil_item||'-')}${r.hasil_qty > 1 ? ' x' + r.hasil_qty : ''}`;
+    return `<tr data-id="${r.id}" class="craft-row">
+      <td>${escapeHtml(r.nama||'-')}</td>
+      <td class="hint" style="font-size:11px;">${bahanText}</td>
+      <td class="hint" style="font-size:11px;">${hasilText}</td>
+      <td class="td-actions"><button type="button" class="small danger craft-del-btn" data-id="${r.id}">🗑</button></td>
+    </tr>`;
+  }).join('');
+  box.querySelectorAll('.craft-row').forEach(row => { row.onclick = (e) => { if (e.target.closest('button')) return; loadRecipeToForm(state.recipes[row.dataset.id]); }; });
+  box.querySelectorAll('.craft-del-btn').forEach(btn => { btn.onclick = (e) => { e.stopPropagation(); if (confirm('Hapus resep ini?')) socket.emit('dm:delete-recipe', { code: CODE, recipeId: btn.dataset.id }); }; });
+}
+document.getElementById('craftSearch').addEventListener('input', renderCraftTable);
+
+function loadRecipeToForm(r) {
+  document.getElementById('craft_id').value = r?.id || '';
+  document.getElementById('craft_nama').value = r?.nama || '';
+  document.getElementById('craft_deskripsi').value = r?.deskripsi || '';
+  craftBahanState = r ? JSON.parse(JSON.stringify(r.bahan || [])) : [];
+  renderCraftBahanList();
+  document.getElementById('craft_hasilItem').value = r?.hasil_item || '';
+  document.getElementById('craft_hasilQty').value = r?.hasil_qty || 1;
+  document.getElementById('craft_hasilDesc').value = r?.hasil_desc || '';
+  document.getElementById('craft_hasilTipe').value = r?.hasil_tipe || 'misc';
+  document.getElementById('craft_hasilFormula').value = r?.hasil_formula || '';
+}
+document.getElementById('btnCraftResetForm').onclick = () => loadRecipeToForm(null);
+document.getElementById('btnCraftSaveRecipe').onclick = () => {
+  const nama = document.getElementById('craft_nama').value.trim(); if (!nama) return alert('Isi nama resep.');
+  const hasil_item = document.getElementById('craft_hasilItem').value.trim(); if (!hasil_item) return alert('Isi nama item hasil.');
+  const bahan = craftBahanState.filter(b => (b.item||'').trim());
+  if (!bahan.length) return alert('Isi minimal 1 bahan.');
+  const recipe = {
+    id: document.getElementById('craft_id').value || undefined,
+    nama, deskripsi: document.getElementById('craft_deskripsi').value,
+    bahan,
+    hasil_item, hasil_qty: parseInt(document.getElementById('craft_hasilQty').value, 10) || 1,
+    hasil_desc: document.getElementById('craft_hasilDesc').value,
+    hasil_tipe: document.getElementById('craft_hasilTipe').value || 'misc',
+    hasil_formula: document.getElementById('craft_hasilFormula').value.trim()
+  };
+  socket.emit('dm:save-recipe', { code: CODE, recipe }, (res) => { if (!res?.ok) alert(res?.error || 'Gagal.'); else loadRecipeToForm(null); });
+};
 document.getElementById('shopImportFile').addEventListener('change', (e)=>{
   const file=e.target.files[0]; if(!file) return;
   const reader=new FileReader();
@@ -1771,7 +1964,7 @@ socket.on('chat:starred', ({ id, starred }) => {
 
 // =============================== RENDER ALL ============================
 function renderAll() {
-  renderPlayers(); renderNpcs(); renderClasses(); renderBattle(); renderMusic(); renderShop(); renderLog();
+  renderPlayers(); renderNpcs(); renderClasses(); renderCraftTable(); renderBattle(); renderMusic(); renderShop(); renderLog();
   refreshBattleSourceOptions(); refreshTokenOwnerOptions();
   if (document.getElementById('tab-dm-map').style.display !== 'none') { renderMapTabs(); renderMap(); }
   if (document.getElementById('tab-dm-story').style.display !== 'none') { renderStory(); }

@@ -122,6 +122,7 @@ let skillCooldownState = {}; // { "active_0": sisaGiliran, ... } — di-reset sa
 let classCatalog = {};
 let myUnlockedClasses = [];
 let shopItems = {};
+let craftRecipes = {};
 
 // Battle state
 const battleState = {
@@ -185,7 +186,7 @@ socket.on('players-list-update', (list) => {
 
 // =============================== TABS ===================================
 function showPageTab(name) {
-  ['sheet','battle','map','story','companion','shop'].forEach(t => {
+  ['sheet','battle','map','story','companion','shop','craft'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === name ? '' : 'none';
     document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
   });
@@ -194,6 +195,7 @@ function showPageTab(name) {
   if (name === 'story') renderStoryPlayer();
   if (name === 'companion') renderCompanions();
   if (name === 'shop') renderShopList();
+  if (name === 'craft') renderCraftList();
 }
 document.getElementById('tabBtnSheet').addEventListener('click', () => showPageTab('sheet'));
 document.getElementById('tabBtnBattle').addEventListener('click', () => showPageTab('battle'));
@@ -201,6 +203,7 @@ document.getElementById('tabBtnMap').addEventListener('click', () => showPageTab
 document.getElementById('tabBtnStory').addEventListener('click', () => showPageTab('story'));
 document.getElementById('tabBtnCompanion').addEventListener('click', () => showPageTab('companion'));
 document.getElementById('tabBtnShop').addEventListener('click', () => showPageTab('shop'));
+document.getElementById('tabBtnCraft').addEventListener('click', () => showPageTab('craft'));
 
 function showBattleSubTab(name) {
   document.getElementById('battle-sub-battle').style.display = name === 'battle' ? '' : 'none';
@@ -299,6 +302,10 @@ function renderInventory() {
   const addBtn = document.getElementById('btnAddInvSlot');
   if (addBtn) addBtn.disabled = invState.length >= max;
   renderTradeItemSelect();
+  // Refresh preview "bahan cukup/kurang" di tab Crafting kalau lagi dibuka,
+  // biar update langsung pas inventory berubah tanpa perlu pindah tab.
+  const craftTab = document.getElementById('tab-craft');
+  if (craftTab && craftTab.style.display !== 'none') renderCraftList();
 }
 
 // =============================== TRADE (kirim item ke player lain) =======
@@ -776,6 +783,62 @@ function buyShopItem(itemId, qty) {
   });
 }
 
+// =============================== CRAFTING (player) =======================
+// Hitung berapa banyak item bernama `nama` yang dipunyai player saat ini
+// (jumlahkan lintas slot, cocokkan case-insensitive) — dipakai buat preview
+// "bahan cukup/kurang" sebelum klik Craft, biar gak perlu nebak-nebak.
+function invQtyOf(nama) {
+  const target = (nama || '').trim().toLowerCase();
+  return invState.filter(it => (it.item || '').trim().toLowerCase() === target)
+    .reduce((sum, it) => sum + (parseInt(it.qty, 10) || 1), 0);
+}
+
+function renderCraftList() {
+  const box = document.getElementById('craftList');
+  if (!box) return;
+  const list = Object.values(craftRecipes || {});
+  if (!list.length) { box.innerHTML = '<p class="hint">DM belum menambahkan resep crafting.</p>'; return; }
+
+  box.innerHTML = list.map(r => {
+    const bahanRows = (r.bahan || []).map(b => {
+      const have = invQtyOf(b.item);
+      const enough = have >= b.qty;
+      return `<div class="hint" style="color:${enough ? 'inherit' : 'var(--crimson-bright)'};">${enough ? '✓' : '✗'} ${pEscapeHtml(b.item)} — punya ${have}/${b.qty}</div>`;
+    }).join('');
+    const canCraft = (r.bahan || []).every(b => invQtyOf(b.item) >= b.qty);
+    return `<div class="shop-card" data-id="${r.id}">
+      <div class="shop-card-top">
+        <div>
+          <div class="shop-card-name">${pEscapeHtml(r.nama)}</div>
+          ${r.deskripsi ? `<div class="shop-card-desc">${pEscapeHtml(r.deskripsi)}</div>` : ''}
+          <div style="margin-top:4px;">${bahanRows}</div>
+        </div>
+      </div>
+      <div class="shop-card-buy-row">
+        <span class="hint">Hasil: ${pEscapeHtml(r.hasil_item)}${r.hasil_qty > 1 ? ' x' + r.hasil_qty : ''}</span>
+        <button type="button" class="small craft-btn" data-id="${r.id}" ${canCraft ? '' : 'disabled'}>${canCraft ? '🛠 Craft' : 'Bahan Kurang'}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.craft-btn').forEach(btn => {
+    btn.addEventListener('click', () => craftRecipe(btn.dataset.id));
+  });
+}
+
+function craftRecipe(recipeId) {
+  socket.emit('player:craft', { code: CODE, playerId: PLAYER_ID, recipeId }, (res) => {
+    if (res && res.ok) {
+      fillForm(res.sheet);
+      const r = craftRecipes[recipeId];
+      showToast(`🛠 Berhasil crafting ${r ? r.hasil_item : 'item'}.`);
+      renderCraftList();
+    } else {
+      alert(res && res.error ? res.error : 'Gagal crafting.');
+    }
+  });
+}
+
 // =============================== STATIC SECTIONS ========================
 function renderStaticSections() {
   // Ability scores
@@ -950,6 +1013,7 @@ function setResourceBar(barId, curId, maxId) {
 // =============================== FILL FORM ==============================
 function fillForm(sheet) {
   document.getElementById('f_nama_karakter').value = sheet.nama_karakter || '';
+  setPortraitPreview(sheet.portrait || null);
   document.getElementById('f_kelas').value = sheet.kelas || '';
   document.getElementById('f_ras').value = sheet.ras || '';
   document.getElementById('f_alignment').value = sheet.alignment || '';
@@ -1081,6 +1145,7 @@ function readForm() {
   const sheet = {
     nama_karakter: val('f_nama_karakter'), kelas: val('f_kelas'), ras: val('f_ras'),
     alignment: val('f_alignment'), lv: val('f_lv'), exp: val('f_exp'), kelas_exp: val('f_kelas_exp'),
+    portrait: portraitDataUrl,
     ability: {}, condition: [], condition_other: val('f_condition_other'),
     ac: val('f_ac'), initiative: val('f_initiative'),
     max_hp: val('f_max_hp'), current_hp: val('f_current_hp'), temp_hp: val('f_temp_hp'),
@@ -1206,13 +1271,15 @@ socket.on('connect', () => {
     diceLog = res.state.log || [];
     onlinePlayersList = res.state.playersList || [];
     shopItems = (res.state.shop && res.state.shop.items) || {};
+    craftRecipes = res.state.recipes || {};
     storyState = res.state.story || storyState;
-    renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderPMusicList(); renderOnlinePlayers(); renderShopList();
+    renderPMap(); renderPBattle(); renderDiceLog(); syncPlayerMusic(); renderPMusicList(); renderOnlinePlayers(); renderShopList(); renderCraftList();
     renderSceneBanner(); renderDialogueBox(); renderStoryPlayer();
   });
 });
 
 socket.on('shop-updated', (items) => { shopItems = items || {}; renderShopList(); });
+socket.on('recipes-update', (recipes) => { craftRecipes = recipes || {}; renderCraftList(); });
 socket.on('classes-update', (classes) => { classCatalog = classes || {}; renderClassPicker(); });
 socket.on('your-classes-updated', ({ unlockedClasses, note }) => {
   myUnlockedClasses = unlockedClasses || []; renderClassPicker();
@@ -1305,7 +1372,9 @@ function renderFogCanvasPlayer() {
 }
 
 let pDraggingTokenId = null;
-window.addEventListener('mousemove', (e) => {
+// Pointer Events (bukan mouse events) supaya token milik player bisa
+// digeser pakai jari di HP/tablet, bukan cuma mouse di desktop.
+window.addEventListener('pointermove', (e) => {
   if (!pDraggingTokenId) return;
   const el = pMapInner.querySelector(`.token[data-id="${pDraggingTokenId}"]`);
   if (!el) return;
@@ -1314,7 +1383,7 @@ window.addEventListener('mousemove', (e) => {
   const y = Math.max(0, Math.min(100, (e.clientY - rect.top) / rect.height * 100));
   el.style.left = x + '%'; el.style.top = y + '%';
 });
-window.addEventListener('mouseup', (e) => {
+window.addEventListener('pointerup', (e) => {
   if (!pDraggingTokenId) return;
   const id = pDraggingTokenId; pDraggingTokenId = null;
   const rect = pMapInner.getBoundingClientRect();
@@ -1322,6 +1391,7 @@ window.addEventListener('mouseup', (e) => {
   const y = Math.max(0, Math.min(100, (e.clientY - rect.top) / rect.height * 100));
   socket.emit('token:move', { code: CODE, tokenId: id, x, y });
 });
+window.addEventListener('pointercancel', () => { pDraggingTokenId = null; });
 
 function renderPTokens() {
   pMapInner.querySelectorAll('.token').forEach(el => el.remove());
@@ -1369,7 +1439,7 @@ function renderPTokens() {
     el.appendChild(circle);
 
     el.title = (tok.label || '') + (mine ? ' (token kamu — bisa digeser)' : '');
-    if (mine) el.addEventListener('mousedown', (e) => { pDraggingTokenId = tok.id; e.preventDefault(); e.stopPropagation(); });
+    if (mine) el.addEventListener('pointerdown', (e) => { pDraggingTokenId = tok.id; e.preventDefault(); e.stopPropagation(); });
     pMapInner.appendChild(el);
   });
 }
@@ -1379,9 +1449,65 @@ function setBarFill(id, cur, max) {
   const el = document.getElementById(id);
   if (!el) return;
   const m = parseFloat(max), c = parseFloat(cur);
-  if (!m || isNaN(m)) { el.style.width = '0%'; return; }
-  el.style.width = Math.max(0, Math.min(100, (isNaN(c) ? m : c) / m * 100)) + '%';
+  const pct = (!m || isNaN(m)) ? 0 : Math.max(0, Math.min(100, (isNaN(c) ? m : c) / m * 100));
+  const prevPct = parseFloat(el.dataset.pct);
+  if (!isNaN(prevPct) && prevPct !== pct && window.BattleFX) window.BattleFX.flashBar(el, pct > prevPct);
+  el.dataset.pct = pct;
+  el.style.width = pct + '%';
 }
+
+// =============================== PORTRAIT ================================
+// Avatar kecil karakter, diupload player sendiri. Dikompres ke thumbnail
+// kecil (JPEG, maks 256px) di sisi klien dulu sebelum disimpan ke sheet,
+// biar gak numpuk data base64 gede-gede tiap kali sheet disave.
+let portraitDataUrl = null;
+const PORTRAIT_MAX_DIM = 256;
+function setPortraitPreview(dataUrl) {
+  portraitDataUrl = dataUrl || null;
+  const img = document.getElementById('charPortraitImg');
+  const ph = document.getElementById('charPortraitPlaceholder');
+  const rm = document.getElementById('btnRemovePortrait');
+  if (!img || !ph || !rm) return;
+  if (portraitDataUrl) { img.src = portraitDataUrl; img.style.display = ''; ph.style.display = 'none'; rm.style.display = ''; }
+  else { img.style.display = 'none'; img.src = ''; ph.style.display = ''; rm.style.display = 'none'; }
+}
+function resizeImageDataUrl(dataUrl, maxDim, cb) {
+  const img = new Image();
+  img.onload = () => {
+    let { width, height } = img;
+    if (width > maxDim || height > maxDim) {
+      const scale = maxDim / Math.max(width, height);
+      width = Math.round(width * scale); height = Math.round(height * scale);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+    cb(canvas.toDataURL('image/jpeg', 0.85));
+  };
+  img.onerror = () => cb(dataUrl);
+  img.src = dataUrl;
+}
+document.getElementById('charPortraitWrap').addEventListener('click', () => {
+  document.getElementById('portraitUploadFile').click();
+});
+document.getElementById('portraitUploadFile').addEventListener('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('File harus berupa gambar.'); e.target.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    resizeImageDataUrl(reader.result, PORTRAIT_MAX_DIM, (resized) => {
+      setPortraitPreview(resized);
+      scheduleSave();
+    });
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+});
+document.getElementById('btnRemovePortrait').addEventListener('click', (e) => {
+  e.stopPropagation();
+  setPortraitPreview(null);
+  scheduleSave();
+});
 
 const SKILL_ACTION_LABEL = Object.fromEntries(SKILL_ACTION_OPTIONS);
 
@@ -1690,12 +1816,24 @@ function renderBattleStatus() {
   const el = document.getElementById(btId); if (!el) return;
   el.addEventListener('input', () => { document.getElementById(fId).value = el.value; updateHpBar(); renderBattleStatus(); });
 });
+// Tombol −/+ cepat buat HP/MP/SP sendiri — sekali tap, gak perlu buka keyboard
+// angka & ketik manual tiap kali kena damage/heal saat battle di HP.
+document.querySelectorAll('.stepper-btn[data-target]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const input = document.getElementById(btn.dataset.target); if (!input) return;
+    const next = Math.max(0, (parseFloat(input.value) || 0) + parseFloat(btn.dataset.step));
+    input.value = next;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+});
 document.querySelector('.sheet').addEventListener('input', renderBattleStatus);
 document.querySelector('.sheet').addEventListener('change', renderBattleStatus);
 
 // =============================== BATTLE LIST ============================
 let lastMyTurnActiveId = null;
 socket.on('battle-updated', (battle) => {
+  const prevEntries = (battleState.battle && battleState.battle.entries) || {};
+  const prevActiveId = battleState.battle && battleState.battle.turn && battleState.battle.turn.activeId;
   battleState.battle = battle;
   // Tiap giliran karakter sendiri mulai (activeId berubah jadi entry kita), kurangi semua cooldown skill 1x.
   const turn = battle && battle.turn;
@@ -1709,6 +1847,7 @@ socket.on('battle-updated', (battle) => {
     if (changed) { scheduleSave(); renderBattleSkillList(); }
   }
   renderPBattle();
+  if (window.BattleFX) window.BattleFX.processBattleUpdate({ prevEntries, battle, mapInnerEl: pMapInner, prevActiveId, myEntryId: myEntry && myEntry.id });
 });
 socket.on('battle-apply-status', ({ targetId, condition }) => {
   // If I'm the target, auto-check the condition
@@ -1720,6 +1859,7 @@ socket.on('battle-apply-status', ({ targetId, condition }) => {
   }
 });
 
+const prevBattleRowPct = {};
 function renderPBattle() {
   const turn = (battleState.battle && battleState.battle.turn) || { activeId: null, round: 1 };
   document.getElementById('pRoundBadge').textContent = 'Round ' + (turn.round || 1);
@@ -1741,10 +1881,10 @@ function renderPBattle() {
         <span class="hint" style="color:var(--crimson-bright);">💀 Sekarat: ${ds.success}✓ / ${ds.fail}✗</span>
         <button type="button" class="small secondary death-save-btn-p" data-id="${e.id}" style="margin-left:6px;">🎲 Death Save</button>
       </div>` : (isDying ? `<div class="hint" style="color:var(--crimson-bright); margin-top:4px;">💀 Sekarat: ${ds.success}✓ / ${ds.fail}✗</div>` : '');
-    return `<div class="battle-row ${e.id===turn.activeId?'active':''}">
+    return `<div class="battle-row ${e.id===turn.activeId?'active':''}" data-id="${e.id}">
       <div class="roll-num">${e.roll??'-'}</div>
       <div class="b-info">
-        <div class="b-name">${pEscapeHtml(e.name)} <span class="type-pill ${e.type}">${e.type}</span></div>
+        <div class="b-name">${e.portrait?`<img src="${e.portrait}" alt="" class="b-avatar-img">`:''}${pEscapeHtml(e.name)} <span class="type-pill ${e.type}">${e.type}</span></div>
         <div class="mini-bar-wrap hp" style="margin-top:4px;"><div class="mini-bar-fill" style="width:${pct}%;"></div></div>
         <div class="hint">${e.hp_current??'?'} / ${e.hp_max??'?'} HP${e.ac!==undefined&&e.ac!==''?' · AC '+e.ac:''}</div>
         ${conditions ? `<div style="margin-top:2px;">${conditions}</div>` : ''}
@@ -1759,6 +1899,14 @@ function renderPBattle() {
         if (!res || !res.ok) alert((res && res.error) || 'Gagal roll death save.');
       });
     });
+  });
+  box.querySelectorAll('.battle-row').forEach(row => {
+    const fillEl = row.querySelector('.mini-bar-fill');
+    if (!fillEl) return;
+    const pct = parseFloat(fillEl.style.width) || 0;
+    const prevPct = prevBattleRowPct[row.dataset.id];
+    if (prevPct !== undefined && prevPct !== pct && window.BattleFX) window.BattleFX.flashBar(fillEl, pct > prevPct);
+    prevBattleRowPct[row.dataset.id] = pct;
   });
 
   const targetSel = document.getElementById('pActionTarget');
@@ -1811,6 +1959,7 @@ document.getElementById('btnPActionRoll').addEventListener('click', () => {
 // =============================== DICE LOG / CHAT ========================
 socket.on('chat:new', (entry) => {
   diceLog.push(entry); renderDiceLog();
+  if (entry.type === 'whisper') showToast('✉ Pesan pribadi baru dari DM');
   if (STORY_LOG_TYPES_P.includes(entry.type) && document.getElementById('tab-story').style.display !== 'none') renderStoryRecapPlayer();
 });
 socket.on('chat:cleared', () => { diceLog = []; renderDiceLog(); });
@@ -1827,7 +1976,8 @@ function renderDiceLog() {
     // Color by type
     let cls = e.type || 'chat';
     // Identify DM vs player vs system
-    if (e.from === 'DM' || e.from === 'dm') cls = 'dm';
+    if (e.type === 'whisper') cls = 'whisper';
+    else if (e.from === 'DM' || e.from === 'dm') cls = 'dm';
     else if (e.from === 'Sistema' || e.from === 'system' || e.type === 'system') cls = 'system';
     else if (e.type === 'roll') cls = 'roll';
     else if (e.type === 'damage') cls = 'damage';
@@ -1836,7 +1986,7 @@ function renderDiceLog() {
     return `<div class="entry ${cls}${e.secret?' secret':''}">
       <span class="from">${pEscapeHtml(e.from)}:</span> ${pEscapeHtml(e.text)}
       ${e.imageUrl?`<div><img src="${e.imageUrl}" style="max-width:180px; border-radius:5px; border:1px solid var(--gold); margin-top:4px;"></div>`:''}
-      ${e.secret?`<span class="secret-badge">🔒 rahasia</span>`:''}
+      ${e.type==='whisper'?`<span class="secret-badge">✉ pesan privat dari DM</span>`:(e.secret?`<span class="secret-badge">🔒 rahasia</span>`:'')}
       ${e.ts?`<span class="ts">${new Date(e.ts).toLocaleTimeString()}</span>`:''}
     </div>`;
   }).join('') || '<p class="hint">Belum ada log.</p>';
@@ -1880,6 +2030,11 @@ function renderDialogueBox() {
     document.getElementById('dialogueTextEl').textContent = dlg.text || '';
     const img = document.getElementById('dialoguePortraitImg');
     if (dlg.npcPortrait) { img.src = dlg.npcPortrait; img.style.display = ''; } else { img.style.display = 'none'; img.src = ''; }
+    document.getElementById('dialogueSelfNameEl').textContent = val('f_nama_karakter') || NAME || 'Kamu';
+    const selfImg = document.getElementById('dialogueSelfPortraitImg');
+    const selfFallback = document.getElementById('dialogueSelfPortraitFallback');
+    if (portraitDataUrl) { selfImg.src = portraitDataUrl; selfImg.style.display = ''; selfFallback.style.display = 'none'; }
+    else { selfImg.style.display = 'none'; selfImg.src = ''; selfFallback.style.display = ''; }
   } else {
     el.classList.remove('show');
   }

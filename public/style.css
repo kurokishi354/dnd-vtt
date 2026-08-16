@@ -319,6 +319,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   background-size: 26px 26px, 26px 26px;
 }
 .map-wrap.no-image { aspect-ratio: 16/9; }
+/* Saat DM lagi aktifkan kuas Fog (lihat JS), map jadi "area gambar" murni —
+   matikan gesture scroll bawaan browser di area ini biar sapuan jari gak
+   kepotong gara-gara halaman malah ikut ke-scroll. Di luar mode kuas,
+   map-wrap tetap bisa di-scroll-lewatin seperti biasa. */
+.map-wrap.fog-brush-active { touch-action: none; }
 .map-wrap .map-img { display: block; width: 100%; height: auto; pointer-events: none; user-select: none; }
 .map-wrap .map-overlay { position: absolute; inset: 0; }
 .map-grid-overlay { position: absolute; inset: 0; pointer-events: none; }
@@ -331,7 +336,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   cursor: default; transform: translate(-50%, -50%);
   user-select: none; z-index: 5;
 }
-.token.draggable { cursor: grab; }
+/* touch-action: none = wajib biar jari yang nge-drag token gak malah
+   dianggap scroll halaman sama browser (khusus HP/tablet). */
+.token.draggable { cursor: grab; touch-action: none; }
 .token.draggable:active { cursor: grabbing; }
 .token-circle {
   width: 100%; height: 100%; border-radius: 50%;
@@ -373,13 +380,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .battle-buff-row button[data-remove] { border:none; background:transparent; color:var(--crimson-bright); font-size:15px; padding:0 4px; cursor:pointer; flex:none; }
 
 .battle-row {
-  display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+  display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px;
   border: 1px solid var(--gold); border-radius: 6px; background: #fffdf7; margin-bottom: 6px;
 }
 .battle-row.active { border-color: var(--gold-bright); box-shadow: 0 0 0 2px var(--gold-bright) inset; background: var(--parchment-dark); }
 .battle-row .roll-num {
   width: 28px; height: 28px; border-radius: 50%; background: var(--navy); color: var(--gold-bright);
   display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  margin-top: 2px;
 }
 .battle-row .b-name { font-size: 13px; font-weight: 600; }
 .battle-row .b-info { flex: 1; min-width: 0; }
@@ -387,13 +395,31 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .type-pill.pc { background: #d3e0e6; color: var(--sapphire); }
 .type-pill.ally { background: #d7e6d3; color: var(--emerald); }
 .type-pill.enemy { background: #e6d3d3; color: var(--crimson); }
-.turn-flag { font-size: 10px; color: var(--gold-bright); background: var(--navy); padding: 2px 8px; border-radius: 8px; letter-spacing: .05em; }
+.b-name-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+.turn-flag { font-size: 10px; color: var(--gold-bright); background: var(--navy); padding: 2px 8px; border-radius: 8px; letter-spacing: .05em; flex-shrink: 0; }
+
+/* Baris stat HP/MP/SP di battle-row: label & separator "/" jangan ikut
+   flex:1 kayak .row biasa (kalau ikut, "HP"/"/ " melebar sama besar dgn
+   input dan malah bikin layout berantakan, terutama pas .row wrap di HP). */
+.battle-row .stat-row { align-items: center; flex-wrap: nowrap; }
+.battle-row .stat-label { flex: none; width: 26px; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.battle-row .stat-row > .hint { flex: none; }
+.battle-row .stat-row input[type=number] { flex: 1 1 46px; min-width: 0; text-align: center; }
+
+/* Tombol stepper −/+ cepat buat HP/MP/SP, dipakai DM (battle tracker) &
+   player (status battle sendiri) — biar gak perlu buka keyboard angka
+   tiap kali kena damage/heal, jempol tinggal tap. */
+.stepper-btn {
+  flex: none; width: 26px; height: 26px; padding: 0; line-height: 1;
+  font-size: 15px; font-weight: 700; border-radius: 5px;
+}
 
 /* ---------- shared: chat/dice log ---------- */
 .chat-log { height: 220px; overflow-y: auto; background:#fffdf7; border:1px solid var(--gold); border-radius:5px; padding:6px; font-size:12px; }
 .chat-log .entry { margin-bottom: 4px; }
 .chat-log .entry .from { font-weight: 700; color: var(--navy); }
 .chat-log .entry.roll { color: var(--sapphire); }
+.chat-log .entry.whisper { color: #6b3fa0; background: #f1e9fb; border-radius: 4px; padding: 2px 4px; }
 .chat-log .entry.secret { background: #fff3d6; border-radius: 4px; padding: 2px 4px; }
 .chat-log .entry .secret-badge { color: #a0761f; font-size: 10px; font-style: italic; margin-left: 4px; }
 .chat-log .entry .ts { color: var(--ink-soft); font-size: 10px; margin-left: 4px; }
@@ -650,6 +676,32 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
   /* --- map toolbar row: biar wrap rapi & gak ada elemen kepotong --- */
   .map-toolbar-row, .map-toolbar { gap: 6px; }
+
+  /* ============ BATTLE TRACKER: mobile-friendly ============ */
+  /* Kartu peserta battle dikasih napas lebih & tap target lebih besar,
+     biar gampang di-tap jempol pas lagi seru-serunya combat di HP. */
+  .battle-row { padding: 10px; gap: 10px; }
+  .battle-row .roll-num { width: 32px; height: 32px; font-size: 13px; }
+  .battle-row .b-name { font-size: 14px; }
+  .turn-flag { font-size: 11px; padding: 3px 9px; }
+
+  /* Tombol −/+ stepper HP/MP/SP diperbesar biar gak salah pencet jempol
+     (26px terlalu kecil buat sentuhan langsung, ini standar tap target ~34px). */
+  .stepper-btn { width: 34px; height: 34px; font-size: 18px; }
+  .battle-row .stat-row input[type=number] { min-width: 42px; padding: 6px 4px; }
+
+  /* Tombol hapus peserta (×) dibesarkan juga senada sama stepper */
+  .battle-row .row-remove { width: 34px; height: 34px; min-height: 34px; padding: 0; font-size: 16px; }
+
+  /* Tombol Prev/Next giliran nempel di bawah layar (sticky) selama DM
+     ada di tab Battle — jadi gak perlu scroll naik-turun tiap abis
+     ngedit HP/kondisi buat lanjut ke giliran berikutnya. */
+  .battle-turn-nav {
+    position: sticky; bottom: 0; z-index: 20;
+    background: var(--navy-deep); padding: 8px 4px; margin: 8px -4px 0;
+    box-shadow: 0 -4px 10px rgba(0,0,0,.35);
+  }
+  .battle-turn-nav button { min-height: 44px; font-size: 14px; }
 }
 
 /* ================================================================
@@ -804,13 +856,8 @@ button.secondary { background: rgba(255,255,255,.25); box-shadow: none; }
 .mini-bar-wrap.mp .mini-bar-fill { background: linear-gradient(90deg, #2980b9, #3498db); }
 .mini-bar-wrap.sp .mini-bar-fill { background: linear-gradient(90deg, #27ae60, #a8e063); }
 
-/* Status bar row in battle tab */
-.status-bar-row {
-  display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;
-}
-.status-bar-row label { width: 28px; flex: none; margin: 0; font-weight: 700; }
-.status-bar-row input[type=number] { width: 64px; flex: none; padding: 4px 6px; font-size: 13px; }
-.status-bar-row .sep { color: var(--ink-soft); flex: none; }
+/* Status bar row in battle tab — konsisten dgn definisi awal, gak dobel-override */
+.status-bar-row input[type=number] { width: 64px; }
 
 /* Battle list row */
 .battle-row {
@@ -818,16 +865,6 @@ button.secondary { background: rgba(255,255,255,.25); box-shadow: none; }
   border-radius: 6px; margin-bottom: 6px; background: #fffdf7; align-items: flex-start;
 }
 .battle-row.active { background: rgba(184,147,79,.12); }
-.battle-row .roll-num {
-  font-family: 'Cinzel', serif; font-size: 20px; font-weight: 700;
-  color: var(--gold); width: 32px; text-align: center; flex-shrink: 0; padding-top: 4px;
-}
-.battle-row .b-info { flex: 1; min-width: 0; }
-.battle-row .b-name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
-.battle-row .turn-flag {
-  font-size: 10px; letter-spacing: .1em; font-weight: 700; color: var(--gold-bright);
-  writing-mode: vertical-rl; text-orientation: mixed; flex-shrink: 0;
-}
 
 /* Inventory list v2 */
 .inv-list { margin-bottom: 4px; }
@@ -863,3 +900,128 @@ button.secondary { background: rgba(255,255,255,.25); box-shadow: none; }
 .type-pill.ally  { background: rgba(39,174,96,.15);  color: #27ae60; }
 .type-pill.pc    { background: rgba(41,128,185,.15); color: #2980b9; }
 
+
+/* =============================== BATTLE FX ============================== */
+/* Efek visual battle: damage number melayang, turn banner, highlight token
+   giliran aktif, & flash pulsa di bar HP/MP/SP. Semua efek murni CSS/JS di
+   sisi klien — gak nyentuh data battle di server, jadi aman ditambah kapan pun. */
+
+/* Flash pulsa di bar HP/MP/SP pas kena damage/heal */
+.bar-flash-dmg { animation: barFlashDmg .5s ease; }
+.bar-flash-heal { animation: barFlashHeal .5s ease; }
+@keyframes barFlashDmg {
+  0%   { filter: brightness(1); box-shadow: 0 0 0 rgba(224,50,50,0); }
+  30%  { filter: brightness(1.9) saturate(1.4); box-shadow: 0 0 10px 2px rgba(224,50,50,.65); }
+  100% { filter: brightness(1); box-shadow: 0 0 0 rgba(224,50,50,0); }
+}
+@keyframes barFlashHeal {
+  0%   { filter: brightness(1); box-shadow: 0 0 0 rgba(70,200,120,0); }
+  30%  { filter: brightness(1.7) saturate(1.3); box-shadow: 0 0 10px 2px rgba(70,200,120,.6); }
+  100% { filter: brightness(1); box-shadow: 0 0 0 rgba(70,200,120,0); }
+}
+
+/* Angka damage/heal melayang di atas token peta */
+.dmg-float {
+  position: absolute; left: 50%; top: -6px; transform: translateX(-50%);
+  font-weight: 700; font-size: 15px; pointer-events: none; white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0,0,0,.7), 0 0 6px rgba(0,0,0,.4);
+  animation: dmgFloatUp 1.1s ease-out forwards; z-index: 40;
+}
+.dmg-float.dmg  { color: #ff5c5c; }
+.dmg-float.heal { color: #5ce07a; }
+@keyframes dmgFloatUp {
+  0%   { opacity: 0; transform: translate(-50%, 4px) scale(.8); }
+  15%  { opacity: 1; transform: translate(-50%, -6px) scale(1.15); }
+  30%  { transform: translate(-50%, -14px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -46px) scale(1); }
+}
+
+/* Flash sekilas di token pas kena hit/heal */
+.token-flash-dmg  { animation: tokenFlashDmg .45s ease; }
+.token-flash-heal { animation: tokenFlashHeal .45s ease; }
+@keyframes tokenFlashDmg  { 0%,100% { filter: none; } 35% { filter: brightness(1.6) drop-shadow(0 0 6px rgba(255,60,60,.9)); } }
+@keyframes tokenFlashHeal { 0%,100% { filter: none; } 35% { filter: brightness(1.6) drop-shadow(0 0 6px rgba(90,224,120,.9)); } }
+
+/* Highlight token yang lagi giliran jalan */
+.token.token-active-turn .token-circle {
+  animation: tokenTurnPulse 1.1s ease-in-out infinite;
+}
+@keyframes tokenTurnPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--gold, #d4af37), 0 0 10px 2px rgba(212,175,55,.6); }
+  50%      { box-shadow: 0 0 0 3px var(--gold, #d4af37), 0 0 18px 6px rgba(212,175,55,.9); }
+}
+
+/* Banner giliran — muncul sekilas di tengah layar semua orang */
+.turn-banner-host {
+  position: fixed; top: 12%; left: 50%; transform: translate(-50%, -12px);
+  z-index: 500; pointer-events: none; opacity: 0; transition: opacity .25s ease, transform .25s ease;
+}
+.turn-banner-host.show { opacity: 1; transform: translate(-50%, 0); }
+.turn-banner {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 28px; border-radius: 10px;
+  background: linear-gradient(160deg, rgba(20,14,28,.92), rgba(40,20,45,.92));
+  border: 1px solid rgba(212,175,55,.55);
+  box-shadow: 0 8px 28px rgba(0,0,0,.5), inset 0 0 20px rgba(212,175,55,.08);
+  backdrop-filter: blur(2px);
+}
+.turn-banner-label {
+  font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: #d4af37; opacity: .85;
+}
+.turn-banner-name {
+  font-size: 22px; font-weight: 700; color: #fff;
+  text-shadow: 0 2px 6px rgba(0,0,0,.6);
+}
+.turn-banner.is-me { border-color: rgba(90,224,120,.7); }
+.turn-banner.is-me .turn-banner-label { color: #5ce07a; }
+
+/* =============================== PORTRAITS =============================== */
+/* Avatar/portrait kecil buat karakter — diupload player sendiri, dipakai di
+   header sheet, player card DM, battle list, & dialog box. Disimpan sebagai
+   base64 dataURL (dikompres kecil di sisi klien dulu) di sheet.portrait. */
+
+/* Uploader di header character sheet */
+.char-portrait-wrap {
+  position: relative; display: inline-flex; width: 40px; height: 40px;
+  border-radius: 50%; overflow: visible; vertical-align: middle; margin-right: 8px;
+  cursor: pointer; border: 2px solid var(--gold, #d4af37);
+}
+.char-portrait-img, .char-portrait-placeholder {
+  width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+  background: rgba(212,175,55,.12);
+}
+.char-portrait-wrap:hover { filter: brightness(1.15); }
+.char-portrait-remove {
+  position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--crimson, #b03030); color: #fff; font-size: 10px; line-height: 16px; text-align: center;
+  cursor: pointer;
+}
+
+/* Avatar di player-card DM */
+.pc-avatar {
+  display: inline-flex; width: 26px; height: 26px; border-radius: 50%; overflow: hidden;
+  vertical-align: middle; margin-right: 4px; border: 1px solid var(--gold, #d4af37);
+  align-items: center; justify-content: center; background: rgba(212,175,55,.12); flex: none;
+}
+.pc-avatar-img { width: 100%; height: 100%; object-fit: cover; }
+.pc-avatar-fallback { font-size: 12px; font-weight: 700; opacity: .8; }
+
+/* Avatar kecil di baris battle list (DM & player) */
+.b-avatar-img {
+  width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+  border: 1px solid var(--gold, #d4af37); margin-right: 5px; vertical-align: middle; flex: none;
+}
+
+/* Chip portrait diri sendiri di pojok dialogue box */
+.dialogue-self {
+  position: absolute; right: 10px; bottom: 8px; display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 3px; border-radius: 999px; background: rgba(0,0,0,.28);
+  border: 1px solid rgba(212,175,55,.4); max-width: 45%;
+}
+.dialogue-self-portrait, .dialogue-self-portrait-fallback {
+  width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 11px;
+  background: rgba(212,175,55,.15);
+}
+.dialogue-self-name { font-size: 11px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
