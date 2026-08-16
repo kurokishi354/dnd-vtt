@@ -59,7 +59,7 @@ socket.on('connect', () => {
   socket.emit('dm:rejoin-session', { code: CODE, dmName: DM_NAME }, (res) => {
     if (!res.ok) { alert(res.error || 'Sesi tidak ditemukan.'); location.href = '/'; return; }
     state = res.state;
-    state.playersList = state.playersList || Object.values(state.players).map(p => ({ id: p.id, name: p.name, online: !!p.socketId, nama_karakter: p.sheet.nama_karakter, kelas: p.sheet.kelas, lv: p.sheet.lv, current_hp: p.sheet.current_hp, max_hp: p.sheet.max_hp }));
+    state.playersList = state.playersList || Object.values(state.players).map(p => ({ id: p.id, name: p.name, online: !!p.socketId, nama_karakter: p.sheet.nama_karakter, kelas: p.sheet.kelas, lv: p.sheet.lv, current_hp: p.sheet.current_hp, max_hp: p.sheet.max_hp, portrait: p.sheet.portrait || null }));
     // Server kirim daftar map sebagai array [{id,name}] — ubah ke dict id->obj biar gampang dipakai renderMapTabs()
     state.maps = Object.fromEntries((state.maps||[]).map(m => [m.id, m]));
     currentMapTabId = state.activeMapId || 'main';
@@ -207,6 +207,7 @@ function openPlayerModal(playerId) {
   document.getElementById('currentGoldLabel').textContent = sheet.gold || '0';
   document.getElementById('whisper_text').value = '';
   document.getElementById('whisperStatus').textContent = '';
+  document.getElementById('dmSheetBackupStatus').textContent = '';
   const surv = sheet.survival || { hunger: 100, hunger_max: 100, thirst: 100, thirst_max: 100 };
   document.getElementById('currentSurvivalLabel').textContent = `🍖 ${surv.hunger}/${surv.hunger_max} · 💧 ${surv.thirst}/${surv.thirst_max}`;
   document.getElementById('setHunger_amount').value = '';
@@ -237,6 +238,46 @@ document.getElementById('btnSetInvSlots').onclick = () => {
   });
 };
 document.getElementById('btnClosePlayerModal').onclick = () => { document.getElementById('playerModal').classList.remove('show'); openPlayerId = null; };
+
+// === Backup: Export/Import sheet player dari sisi DM (buat jaga-jaga kalau data hilang) ===
+document.getElementById('btnDmExportSheet').addEventListener('click', () => {
+  const playerId = document.getElementById('giveItem_playerId').value; if (!playerId) return;
+  const pData = (state.playersList || []).find(p => p.id === playerId);
+  const fullData = (state.players || {})[playerId];
+  const sheet = fullData?.sheet || {};
+  const blob = new Blob([JSON.stringify({ type: 'dnd-vtt-character-sheet', version: 2, sheet }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeName = (sheet.nama_karakter || pData?.name || 'character').replace(/[^a-z0-9_\- ]/gi, '').trim() || 'character';
+  a.href = url; a.download = `${safeName}_sheet_backup.json`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  document.getElementById('dmSheetBackupStatus').textContent = '✓ Sheet berhasil di-export.';
+});
+document.getElementById('btnDmImportSheet').addEventListener('click', () => document.getElementById('dmImportSheetFile').click());
+document.getElementById('dmImportSheetFile').addEventListener('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const playerId = document.getElementById('giveItem_playerId').value;
+  const statusEl = document.getElementById('dmSheetBackupStatus');
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const sheet = data && data.sheet ? data.sheet : data;
+      if (!sheet || typeof sheet !== 'object') throw new Error('Format tidak valid.');
+      if (!confirm('Pulihkan sheet ini ke player yang sedang dibuka? Data sheet player saat ini akan ditimpa.')) { e.target.value = ''; return; }
+      socket.emit('dm:import-player-sheet', { code: CODE, playerId, sheet }, (res) => {
+        if (res?.ok) {
+          statusEl.textContent = '✓ Sheet berhasil dipulihkan.';
+          openPlayerModal(playerId);
+        } else {
+          statusEl.textContent = res?.error || 'Gagal memulihkan sheet.';
+        }
+      });
+    } catch (err) { statusEl.textContent = 'Gagal membaca file: ' + err.message; }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
 
 function confirmDeletePlayer(playerId) {
   if (!confirm('Hapus player ini dari sesi?')) return;
@@ -945,6 +986,18 @@ function refreshTokenOwnerOptions() {
   if (list.some(p => p.id === cur)) sel.value = cur;
 }
 
+// Kalau DM pilih owner player (dan belum upload gambar token sendiri),
+// tampilkan preview portrait karakter itu — gambar ini yang otomatis
+// dipakai jadi token kalau DM tidak upload gambar token custom.
+document.getElementById('tokenOwner').addEventListener('change', (e) => {
+  if (tokenImageDataUrl) return; // DM sudah pilih gambar token custom, jangan ditimpa
+  const preview = document.getElementById('tokenImgPreview');
+  const ownerId = e.target.value;
+  const p = (state.playersList || []).find(p => p.id === ownerId);
+  if (p && p.portrait) { preview.src = p.portrait; preview.style.display = 'inline-block'; }
+  else { preview.style.display = 'none'; preview.src = ''; }
+});
+
 document.getElementById('btnAddToken').onclick = () => {
   const color = document.getElementById('tokenColor').value;
   const label = document.getElementById('tokenLabel').value || '?';
@@ -1377,6 +1430,17 @@ window.onYouTubeIframeAPIReady = function () {
   });
 };
 
+// Mute di sisi DM: cuma senyap LOKAL di layar DM — musiknya tetap main
+// terus untuk semua player (gak ikut ke-pause/stop), dan gak ketimpa
+// tiap kali ada update musik dari server.
+let dmMuted = false;
+function applyDmMusicMuteState() {
+  const pb = (state.music && state.music.playback) || {};
+  dmMusicPlayer.muted = dmMuted;
+  if (ytReady && ytPlayer && typeof ytPlayer.setVolume === 'function') {
+    ytPlayer.setVolume(dmMuted ? 0 : Math.round((pb.volume ?? 0.7) * 100));
+  }
+}
 function syncMusicPlayer() {
   const pb = (state.music && state.music.playback)||{};
   const track = pb.trackId && state.music.tracks ? state.music.tracks[pb.trackId] : null;
@@ -1384,13 +1448,14 @@ function syncMusicPlayer() {
     dmMusicPlayer.pause(); dmMusicPlayer.removeAttribute('src'); dmMusicPlayer.dataset.trackId='';
     if (!ytReady||!ytPlayer) return;
     if (ytLoadedId!==track.videoId) { ytLoadedId=track.videoId; if(pb.isPlaying) ytPlayer.loadVideoById(track.videoId); else ytPlayer.cueVideoById(track.videoId); }
-    ytPlayer.setVolume(Math.round((pb.volume??0.7)*100));
+    applyDmMusicMuteState();
     if (pb.isPlaying) { const t=Math.max(0,(Date.now()-pb.startTs)/1000); if(typeof ytPlayer.getCurrentTime==='function'&&Math.abs((ytPlayer.getCurrentTime()||0)-t)>1.5) ytPlayer.seekTo(t,true); ytPlayer.playVideo(); }
     else { ytPlayer.pauseVideo(); if(pb.position) ytPlayer.seekTo(pb.position,true); }
     return;
   }
   if (ytReady&&ytPlayer&&ytLoadedId) { ytPlayer.stopVideo(); ytLoadedId=null; }
   dmMusicPlayer.loop=!!pb.loop; dmMusicPlayer.volume=pb.volume??0.7;
+  applyDmMusicMuteState();
   if (!track) { dmMusicPlayer.pause(); dmMusicPlayer.removeAttribute('src'); return; }
   if (dmMusicPlayer.dataset.trackId!==pb.trackId) { dmMusicPlayer.src=track.url; dmMusicPlayer.dataset.trackId=pb.trackId; }
   if (pb.isPlaying) {
@@ -1400,6 +1465,13 @@ function syncMusicPlayer() {
   } else { dmMusicPlayer.pause(); dmMusicPlayer.currentTime=pb.position||0; }
 }
 document.addEventListener('click', ()=>{ if(!dmMusicUnlocked){dmMusicUnlocked=true;syncMusicPlayer();} }, {once:true});
+const btnMusicMuteDm = document.getElementById('btnMusicMuteDm');
+if (btnMusicMuteDm) btnMusicMuteDm.addEventListener('click', () => {
+  // Cuma toggle senyap lokal di layar DM — musik tetap main untuk semua player.
+  dmMuted = !dmMuted;
+  btnMusicMuteDm.textContent = dmMuted ? '🔇' : '🔊';
+  applyDmMusicMuteState();
+});
 
 function renderMusic() {
   let tracks = Object.values((state.music&&state.music.tracks)||{});

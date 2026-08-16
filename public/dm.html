@@ -397,6 +397,7 @@
       <div class="row" style="margin-top:6px; align-items:center;">
         <label class="hint" style="margin:0;">🔊</label>
         <input type="range" id="musicVolume" min="0" max="1" step="0.05" value="0.7" style="flex:1;">
+        <button type="button" id="btnMusicMuteDm" class="small secondary" title="Senyap lokal di layar DM — musik tetap main untuk semua player.">🔊</button>
       </div>
       <p class="hint" id="musicNowPlaying" style="margin-top:6px;">Tidak ada yang diputar.</p>
       <audio id="musicPlayer" style="display:none;"></audio>
@@ -662,9 +663,9 @@
         <option value="npc">🧑 NPC</option>
         <option value="player">👤 Player</option>
       </select>
-      <select id="tokenOwner"><option value="">Tidak dimiliki player</option></select>
+      <select id="tokenOwner" title="Pilih player pemilik token — kalau tidak upload gambar token sendiri, portrait karakter player itu otomatis dipakai."><option value="">Tidak dimiliki player</option></select>
       <!-- Token image upload -->
-      <label class="hint" style="margin:0; display:flex; align-items:center; gap:4px;">
+      <label class="hint" style="margin:0; display:flex; align-items:center; gap:4px;" title="Kosongkan supaya token otomatis pakai portrait karakter player yang dipilih di atas.">
         <input type="file" id="tokenImageUpload" accept="image/*" style="max-width:130px;"> Token Img
       </label>
       <img id="tokenImgPreview" class="token-img-preview" src="" alt="">
@@ -700,6 +701,17 @@
   <div class="modal-box">
     <h2 id="playerModalTitle">Character Sheet</h2>
     <input type="hidden" id="giveItem_playerId">
+
+    <div class="give-item-box">
+      <label style="margin:0;">💾 Backup Sheet Player Ini</label>
+      <p class="hint" style="margin:4px 0;">Simpan sheet player ini sebagai file cadangan, atau pulihkan dari file backup kalau datanya hilang/rusak.</p>
+      <div class="row" style="margin-top:4px;">
+        <button type="button" id="btnDmExportSheet" class="small secondary" style="white-space:nowrap;">⬇ Export Sheet</button>
+        <button type="button" id="btnDmImportSheet" class="small secondary" style="white-space:nowrap;">⬆ Import / Pulihkan Sheet</button>
+        <input type="file" id="dmImportSheetFile" accept="application/json" style="display:none;">
+      </div>
+      <p class="hint" id="dmSheetBackupStatus" style="margin-top:4px;"></p>
+    </div>
 
     <div class="give-item-box">
       <label style="margin:0;">🎁 Beri Item ke Player Ini</label>

@@ -186,33 +186,37 @@ socket.on('players-list-update', (list) => {
 
 // =============================== TABS ===================================
 function showPageTab(name) {
-  ['sheet','battle','map','story','companion','shop','craft'].forEach(t => {
+  ['sheet','map','story','companion','shop','craft'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === name ? '' : 'none';
     document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
   });
-  if (name === 'battle') renderBattleStatus();
-  if (name === 'map') renderPMap();
+  if (name === 'map') { renderPMap(); renderBattleStatus(); }
   if (name === 'story') renderStoryPlayer();
   if (name === 'companion') renderCompanions();
   if (name === 'shop') renderShopList();
   if (name === 'craft') renderCraftList();
 }
 document.getElementById('tabBtnSheet').addEventListener('click', () => showPageTab('sheet'));
-document.getElementById('tabBtnBattle').addEventListener('click', () => showPageTab('battle'));
 document.getElementById('tabBtnMap').addEventListener('click', () => showPageTab('map'));
 document.getElementById('tabBtnStory').addEventListener('click', () => showPageTab('story'));
 document.getElementById('tabBtnCompanion').addEventListener('click', () => showPageTab('companion'));
 document.getElementById('tabBtnShop').addEventListener('click', () => showPageTab('shop'));
 document.getElementById('tabBtnCraft').addEventListener('click', () => showPageTab('craft'));
 
-function showBattleSubTab(name) {
-  document.getElementById('battle-sub-battle').style.display = name === 'battle' ? '' : 'none';
-  document.getElementById('battle-sub-dice').style.display = name === 'dice' ? '' : 'none';
-  document.getElementById('battleSubTabBattle').classList.toggle('active', name === 'battle');
-  document.getElementById('battleSubTabDice').classList.toggle('active', name === 'dice');
+// Sub-tab di dalam "🗺 Peta & Battle": Peta / Battle / Roll Dadu & Chat
+function showMapSubTab(name) {
+  document.getElementById('map-sub-peta').style.display = name === 'peta' ? '' : 'none';
+  document.getElementById('map-sub-battle').style.display = name === 'battle' ? '' : 'none';
+  document.getElementById('map-sub-dice').style.display = name === 'dice' ? '' : 'none';
+  document.getElementById('mapSubTabPeta').classList.toggle('active', name === 'peta');
+  document.getElementById('mapSubTabBattle').classList.toggle('active', name === 'battle');
+  document.getElementById('mapSubTabDice').classList.toggle('active', name === 'dice');
+  if (name === 'peta') renderPMap();
+  if (name === 'battle') renderBattleStatus();
 }
-document.getElementById('battleSubTabBattle').addEventListener('click', () => showBattleSubTab('battle'));
-document.getElementById('battleSubTabDice').addEventListener('click', () => showBattleSubTab('dice'));
+document.getElementById('mapSubTabPeta').addEventListener('click', () => showMapSubTab('peta'));
+document.getElementById('mapSubTabBattle').addEventListener('click', () => showMapSubTab('battle'));
+document.getElementById('mapSubTabDice').addEventListener('click', () => showMapSubTab('dice'));
 
 // =============================== CLASS PICKER ==========================
 function renderClassPicker() {
@@ -2226,6 +2230,18 @@ window.onYouTubeIframeAPIReady = function () {
   });
 };
 
+// Mute di sisi player: cuma bikin senyap LOKAL di device ini — musiknya
+// sendiri tetap main terus (tersinkron sama semua orang di sesi), gak
+// ikut ke-pause/stop. Dipisah dari volume master (pb.volume) yang
+// dikontrol DM, supaya toggle mute gak ketimpa tiap kali ada update dari server.
+let playerMuted = false;
+function applyPlayerMusicMuteState() {
+  const pb = (battleState.music && battleState.music.playback) || {};
+  playerMusicPlayer.muted = playerMuted;
+  if (pYtReady && pYtPlayer && typeof pYtPlayer.setVolume === 'function') {
+    pYtPlayer.setVolume(playerMuted ? 0 : Math.round((pb.volume ?? 0.7) * 100));
+  }
+}
 function syncPlayerMusic() {
   const pb = (battleState.music && battleState.music.playback) || {};
   const track = pb.trackId && battleState.music.tracks ? battleState.music.tracks[pb.trackId] : null;
@@ -2235,7 +2251,7 @@ function syncPlayerMusic() {
     playerMusicPlayer.pause(); playerMusicPlayer.removeAttribute('src'); playerMusicPlayer.dataset.trackId = '';
     if (!pYtReady || !pYtPlayer) return;
     if (pYtLoadedId !== track.videoId) { pYtLoadedId = track.videoId; if (pb.isPlaying) pYtPlayer.loadVideoById(track.videoId); else pYtPlayer.cueVideoById(track.videoId); }
-    pYtPlayer.setVolume(Math.round((pb.volume??0.7)*100));
+    applyPlayerMusicMuteState();
     if (pb.isPlaying) { const t=Math.max(0,(Date.now()-pb.startTs)/1000); if(typeof pYtPlayer.getCurrentTime==='function'&&Math.abs((pYtPlayer.getCurrentTime()||0)-t)>1.5) pYtPlayer.seekTo(t,true); pYtPlayer.playVideo(); }
     else { pYtPlayer.pauseVideo(); if(pb.position) pYtPlayer.seekTo(pb.position,true); }
     return;
@@ -2243,6 +2259,7 @@ function syncPlayerMusic() {
   if (pYtReady && pYtPlayer && pYtLoadedId) { pYtPlayer.stopVideo(); pYtLoadedId = null; }
   playerMusicPlayer.loop = !!pb.loop;
   playerMusicPlayer.volume = pb.volume ?? 0.7;
+  applyPlayerMusicMuteState();
   if (!track) { playerMusicPlayer.pause(); playerMusicPlayer.removeAttribute('src'); return; }
   if (playerMusicPlayer.dataset.trackId !== pb.trackId) { playerMusicPlayer.src = track.url; playerMusicPlayer.dataset.trackId = pb.trackId; }
   if (pb.isPlaying) {
@@ -2269,7 +2286,12 @@ if (volEl) volEl.addEventListener('input', e => { playerMusicPlayer.volume = par
   btn.addEventListener('click', () => apply(document.documentElement.dataset.theme !== 'dark'));
 })();
 const muteEl = document.getElementById('btnMusicMute');
-if (muteEl) muteEl.addEventListener('click', () => { playerMusicPlayer.muted = !playerMusicPlayer.muted; muteEl.textContent = playerMusicPlayer.muted ? '🔇' : '🔊'; });
+if (muteEl) muteEl.addEventListener('click', () => {
+  // Cuma toggle senyap lokal — musik tetap main di background, gak di-pause/stop.
+  playerMuted = !playerMuted;
+  muteEl.textContent = playerMuted ? '🔇' : '🔊';
+  applyPlayerMusicMuteState();
+});
 
 // Panggil sekali di akhir file — pastiin semua const (pMapWrap, pMapImg, dst) & fungsi
 // yang dipakai di dalamnya udah kebentuk duluan (hindari temporal dead zone error

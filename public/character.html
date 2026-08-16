@@ -217,7 +217,6 @@
 
   <div class="page-tabs">
     <button class="active" id="tabBtnSheet">📜 Sheet</button>
-    <button id="tabBtnBattle">⚔ Battle</button>
     <button id="tabBtnMap">🗺 Peta &amp; Battle</button>
     <button id="tabBtnStory">📖 Cerita</button>
     <button id="tabBtnCompanion">🐾 Companion</button>
@@ -411,13 +410,31 @@
   </div><!-- /tab-sheet -->
 
   <!-- ===== TAB: BATTLE ===== -->
-  <div id="tab-battle" style="display:none;">
+  <div id="tab-map" style="display:none;">
     <div class="page-tabs sub-tabs">
-      <button class="active" id="battleSubTabBattle">⚔ Battle</button>
-      <button id="battleSubTabDice">🎲 Roll Dadu &amp; Chat</button>
+      <button class="active" id="mapSubTabPeta">🗺 Peta</button>
+      <button id="mapSubTabBattle">⚔ Battle</button>
+      <button id="mapSubTabDice">🎲 Roll Dadu &amp; Chat</button>
     </div>
 
-    <div id="battle-sub-battle">
+    <div id="map-sub-peta">
+    <div class="panel">
+      <div class="panel-header">🗺 Peta Pertempuran <span class="hint" id="pMapNameLabel" style="font-weight:400;"></span></div>
+      <div class="map-toolbar-row">
+        <span class="hint">Peta menyesuaikan ukuran gambar aslinya — geser token langsung di atasnya. DM yang mengatur peta & kabut mana yang aktif.</span>
+      </div>
+      <div class="map-wrap no-image" id="pMapWrap">
+        <img id="pMapImg" class="map-img" src="" alt="" style="display:none;">
+        <div id="pMapInner" class="map-overlay">
+          <div class="map-grid-overlay" id="pGridOverlay"></div>
+          <canvas id="pFogLayer" class="fog-layer" style="display:none; position:absolute; inset:0;"></canvas>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (bertanda emas) bisa kamu geser sendiri. Area gelap adalah kabut yang belum dibuka DM.</p>
+    </div>
+    </div><!-- /map-sub-peta -->
+
+    <div id="map-sub-battle" style="display:none;">
     <div class="grid grid-2" style="align-items:start;">
       <div>
         <div class="panel">
@@ -528,9 +545,9 @@
         </div>
       </div>
     </div>
-    </div><!-- /battle-sub-battle -->
+    </div><!-- /map-sub-battle -->
 
-    <div id="battle-sub-dice" style="display:none;">
+    <div id="map-sub-dice" style="display:none;">
       <div class="panel">
         <div class="panel-header">🎲 Roll Dadu &amp; Chat</div>
         <p class="hint" style="margin-bottom:6px;">Semua roll kelihatan oleh semua orang. Roll DM ada badge kunci kalau disembunyikan.</p>
@@ -545,25 +562,7 @@
           <button id="btnPSendChat" class="small">Kirim</button>
         </div>
       </div>
-    </div>
-  </div><!-- /tab-battle -->
-
-  <!-- ===== TAB: PETA & BATTLE (digabung) ===== -->
-  <div id="tab-map" style="display:none;">
-    <div class="panel">
-      <div class="panel-header">🗺 Peta Pertempuran <span class="hint" id="pMapNameLabel" style="font-weight:400;"></span></div>
-      <div class="map-toolbar-row">
-        <span class="hint">Peta menyesuaikan ukuran gambar aslinya — geser token langsung di atasnya. DM yang mengatur peta & kabut mana yang aktif.</span>
-      </div>
-      <div class="map-wrap no-image" id="pMapWrap">
-        <img id="pMapImg" class="map-img" src="" alt="" style="display:none;">
-        <div id="pMapInner" class="map-overlay">
-          <div class="map-grid-overlay" id="pGridOverlay"></div>
-          <canvas id="pFogLayer" class="fog-layer" style="display:none; position:absolute; inset:0;"></canvas>
-        </div>
-      </div>
-      <p class="hint" style="margin-top:6px;">Token yang di-assign ke karaktermu (bertanda emas) bisa kamu geser sendiri. Area gelap adalah kabut yang belum dibuka DM.</p>
-    </div>
+    </div><!-- /map-sub-dice -->
   </div><!-- /tab-map -->
 
   <!-- ===== TAB: CERITA (read-only: quest & recap) ===== -->

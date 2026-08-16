@@ -378,8 +378,26 @@ function publicPlayerList(session) {
     kelas: p.sheet.kelas,
     lv: p.sheet.lv,
     current_hp: p.sheet.current_hp,
-    max_hp: p.sheet.max_hp
+    max_hp: p.sheet.max_hp,
+    portrait: p.sheet.portrait || null
   }));
+}
+
+// Samakan gambar token milik seorang player di SEMUA map dengan portrait
+// terbaru sheet-nya — kecuali token itu sudah dikasih gambar token custom
+// sendiri oleh DM (autoPortrait === false), yang tetap dihormati.
+function syncPlayerPortraitToTokens(session, playerId, portrait) {
+  let touchedActiveMap = false;
+  Object.values(session.maps || {}).forEach(m => {
+    Object.values(m.tokens || {}).forEach(tok => {
+      if (tok.ownerId === playerId && tok.autoPortrait !== false) {
+        tok.imageUrl = portrait || null;
+        tok.autoPortrait = true;
+        if (m === activeMap(session)) touchedActiveMap = true;
+      }
+    });
+  });
+  return touchedActiveMap;
 }
 
 function sessionStateForDM(session) {
@@ -792,6 +810,13 @@ io.on('connection', (socket) => {
     io.to('dm-' + code).emit('sheet-updated', { playerId, sheet });
     io.to('dm-' + code).emit('players-update', publicPlayerList(session));
 
+    // Portrait yang baru diupload/diganti player ikut disinkronkan ke gambar
+    // token battle miliknya (di semua map), biar tokennya otomatis update juga.
+    const tokensTouched = syncPlayerPortraitToTokens(session, playerId, sheet.portrait || null);
+    if (tokensTouched) {
+      io.to('room-' + code).emit('tokens-updated', activeMap(session).tokens);
+    }
+
     // Sinkronkan HP/MP/SP/AC ke entri battle milik player ini (kalau sedang ikut battle),
     // supaya daftar Battle & Giliran di layar DM dan semua player selalu menampilkan
     // angka terbaru dari sheet, bukan angka lama waktu pertama kali ditambahkan ke battle.
@@ -826,6 +851,43 @@ io.on('connection', (socket) => {
       name: session.players[playerId].name,
       unlockedClasses: session.players[playerId].unlockedClasses
     });
+  });
+
+  // === DM: pulihkan/timpa sheet seorang player dari file backup (export player atau export DM) ===
+  socket.on('dm:import-player-sheet', ({ code, playerId, sheet }, cb) => {
+    const session = sessions[code];
+    if (!session || !session.players[playerId]) return cb && cb({ ok: false, error: 'Player tidak ditemukan.' });
+    if (!sheet || typeof sheet !== 'object') return cb && cb({ ok: false, error: 'Format sheet tidak valid.' });
+    const player = session.players[playerId];
+    player.sheet = sheet;
+    ensurePlayerDefaults(player);
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('sheet-updated', { playerId, sheet: player.sheet });
+    io.to('dm-' + code).emit('players-update', publicPlayerList(session));
+    if (player.socketId) {
+      io.to(player.socketId).emit('your-sheet-updated', { sheet: player.sheet, note: 'DM memulihkan sheet-mu dari file backup.' });
+    }
+
+    // Samain juga sinkronisasi battle entry & token portrait, sama seperti player update-sheet biasa.
+    let battleTouched = false;
+    Object.values(session.battle.entries || {}).forEach(en => {
+      if (en.refType === 'player' && en.refId === playerId) {
+        en.hp_max = sheet.max_hp ?? en.hp_max;
+        en.hp_current = sheet.current_hp ?? en.hp_current;
+        en.mp_max = sheet.mp_max ?? en.mp_max;
+        en.mp_current = sheet.mp_current ?? en.mp_current;
+        en.sp_max = sheet.sp_max ?? en.sp_max;
+        en.sp_current = sheet.sp_current ?? en.sp_current;
+        en.ac = sheet.ac ?? en.ac;
+        en.portrait = sheet.portrait ?? en.portrait ?? null;
+        battleTouched = true;
+      }
+    });
+    if (battleTouched) io.to('room-' + code).emit('battle-updated', session.battle);
+    const tokensTouched = syncPlayerPortraitToTokens(session, playerId, sheet.portrait || null);
+    if (tokensTouched) io.to('room-' + code).emit('tokens-updated', activeMap(session).tokens);
+
+    cb && cb({ ok: true });
   });
 
   // === DM: beri item ke player (masuk ke inventory player, muncul real-time) ===
@@ -1563,6 +1625,15 @@ io.on('connection', (socket) => {
     ensureSessionDefaults(session);
     const map = activeMap(session);
     token.id = token.id || genId('tok');
+    // Kalau token di-assign ke seorang player dan DM tidak upload gambar
+    // token custom sendiri, otomatis pakai portrait karakter player itu
+    // (yang sudah diupload di halaman sheet-nya) sebagai gambar token.
+    if (token.ownerId && session.players[token.ownerId] && !token.imageUrl) {
+      const portrait = session.players[token.ownerId].sheet.portrait || null;
+      if (portrait) { token.imageUrl = portrait; token.autoPortrait = true; }
+    } else if (token.imageUrl) {
+      token.autoPortrait = false; // gambar custom dari DM, jangan ditimpa portrait nanti
+    }
     map.tokens[token.id] = token;
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('tokens-updated', map.tokens);
@@ -1588,6 +1659,7 @@ io.on('connection', (socket) => {
     ensureSessionDefaults(session);
     const map = activeMap(session);
     if (!map.tokens[tokenId]) return;
+    if (patch && patch.imageUrl !== undefined) patch.autoPortrait = false;
     Object.assign(map.tokens[tokenId], patch);
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('tokens-updated', map.tokens);
