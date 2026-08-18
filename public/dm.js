@@ -1163,7 +1163,7 @@ function renderBattle() {
     const isPc = e.type === 'pc';
     const ro = isPc ? 'readonly' : '';
     const elemStr = e.elements ? Object.entries(e.elements).filter(([,v])=>v&&v!=='0'&&v!=='0%').map(([k,v])=>`<span class="elem-badge">${k}:${v}</span>`).join(' ') : '';
-    const condStr = (e.conditions||[]).map(c=>`<span class="hint">${escapeHtml(c)}</span>`).join(' ');
+    const condStr = (e.conditions||[]).map(c=>`<span class="hint cond-tag" data-cond="${escapeAttr(c)}">${escapeHtml(c)} <button type="button" class="cond-remove" data-cond="${escapeAttr(c)}" title="Cabut kondisi ini">×</button></span>`).join(' ');
     const isDying = (e.conditions||[]).includes('Sekarat');
     const ds = e.death_saves || { success: 0, fail: 0 };
     const deathSaveBlock = isDying ? `
@@ -1203,6 +1203,14 @@ function renderBattle() {
       });
     });
     row.querySelector('.row-remove').onclick = () => socket.emit('dm:battle-remove', { code: CODE, id });
+    row.querySelectorAll('.cond-remove').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        socket.emit('battle:remove-status', { code: CODE, targetId: id, condition: btn.dataset.cond }, (res) => {
+          if (!res || !res.ok) alert((res && res.error) || 'Gagal mencabut kondisi.');
+        });
+      };
+    });
     const dsBtn = row.querySelector('.death-save-btn');
     if (dsBtn) dsBtn.onclick = () => socket.emit('battle:death-save', { code: CODE, targetId: id }, (res) => {
       if (!res || !res.ok) alert((res && res.error) || 'Gagal roll death save.');

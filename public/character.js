@@ -16,20 +16,27 @@ const ABILITIES = [
 ];
 
 // CONDITIONS: fatal = tidak bisa giliran, dot = tetap bisa tapi kena efek tiap round,
-// debuff = kondisi negatif yang aktif (bukan fatal, bukan DOT) — mis. Silenced/Blinded/Fear/Confused
+// debuff = kondisi negatif yang aktif (bukan fatal, bukan DOT) — mis. Silenced/Blinded/Fear/Confused,
+// buff = kondisi positif — begitu DM terapkan lewat panel Status Condition, otomatis nempel efek
+// numerik (DEF/ATK/heal per giliran), sama kayak Poisoned/Burn/Bleeding tapi ke arah sebaliknya.
 const CONDITIONS = [
-  { name:'Normal', fatal:false, dot:false, debuff:false },
-  { name:'Stunned', fatal:true, dot:false, debuff:false },
-  { name:'Frozen', fatal:true, dot:false, debuff:false },
-  { name:'Silenced', fatal:false, dot:false, debuff:true },
-  { name:'Poisoned', fatal:false, dot:true, debuff:false },
-  { name:'Blinded', fatal:false, dot:false, debuff:true },
-  { name:'Sleep', fatal:true, dot:false, debuff:false },
-  { name:'Confused', fatal:false, dot:false, debuff:true },
-  { name:'Burn', fatal:false, dot:true, debuff:false },
-  { name:'Fear', fatal:false, dot:false, debuff:true },
-  { name:'Paralyzed', fatal:true, dot:false, debuff:false },
-  { name:'Bleeding', fatal:false, dot:true, debuff:false }
+  { name:'Normal', fatal:false, dot:false, debuff:false, buff:false },
+  { name:'Stunned', fatal:true, dot:false, debuff:false, buff:false },
+  { name:'Frozen', fatal:true, dot:false, debuff:false, buff:false },
+  { name:'Silenced', fatal:false, dot:false, debuff:true, buff:false },
+  { name:'Poisoned', fatal:false, dot:true, debuff:false, buff:false },
+  { name:'Blinded', fatal:false, dot:false, debuff:true, buff:false },
+  { name:'Sleep', fatal:true, dot:false, debuff:false, buff:false },
+  { name:'Confused', fatal:false, dot:false, debuff:true, buff:false },
+  { name:'Burn', fatal:false, dot:true, debuff:false, buff:false },
+  { name:'Fear', fatal:false, dot:false, debuff:true, buff:false },
+  { name:'Paralyzed', fatal:true, dot:false, debuff:false, buff:false },
+  { name:'Bleeding', fatal:false, dot:true, debuff:false, buff:false },
+  { name:'Weaken', fatal:false, dot:false, debuff:true, buff:false },
+  { name:'Exposed', fatal:false, dot:false, debuff:true, buff:false },
+  { name:'Regen', fatal:false, dot:false, debuff:false, buff:true },
+  { name:'Shield', fatal:false, dot:false, debuff:false, buff:true },
+  { name:'Blessed', fatal:false, dot:false, debuff:false, buff:true }
 ];
 
 const SKILL_ACTION_OPTIONS = [
@@ -57,7 +64,7 @@ const BUFF_STAT_OPTIONS = [
 ];
 
 // Skill status effect: bisa dikaitkan ke skill -> jika kena, otomatis ceklis condition
-const STATUS_EFFECT_OPTIONS = ['','Stunned','Frozen','Silenced','Poisoned','Blinded','Sleep','Confused','Burn','Fear','Paralyzed','Bleeding'];
+const STATUS_EFFECT_OPTIONS = ['','Stunned','Frozen','Silenced','Poisoned','Blinded','Sleep','Confused','Burn','Fear','Paralyzed','Bleeding','Weaken','Exposed','Regen','Shield','Blessed'];
 
 // Tipe efek item inventory — kaya potion di RPG pada umumnya: bukan cuma HP, tapi juga MP/SP,
 // bisa nyembuhin status (cure), bahkan revive (hapus kondisi fatal + heal sekaligus).
@@ -862,7 +869,7 @@ function renderStaticSections() {
 
   // Conditions
   document.getElementById('conditionContainer').innerHTML =
-    CONDITIONS.map(c => `<label class="${c.fatal?'condition-fatal':c.dot?'condition-dot':c.debuff?'condition-debuff':''}"><input type="checkbox" class="cond-box" value="${c.name}"> ${c.name}${c.fatal?' ⛔':c.dot?' 🔥':c.debuff?' 🌀':''}</label>`).join('') +
+    CONDITIONS.map(c => `<label class="${c.fatal?'condition-fatal':c.dot?'condition-dot':c.debuff?'condition-debuff':c.buff?'condition-buff':''}"><input type="checkbox" class="cond-box" value="${c.name}"> ${c.name}${c.fatal?' ⛔':c.dot?' 🔥':c.debuff?' 🌀':c.buff?' ✨':''}</label>`).join('') +
     `<label>Other: <input type="text" id="f_condition_other" style="width:100px; display:inline-block;"></label>`;
 
   // Death count
