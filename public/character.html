@@ -373,13 +373,10 @@
       </div>
 
       <div class="panel">
-        <div class="panel-header">🌀 Buff / Debuff &amp; Efek Aktif</div>
+        <div class="panel-header">🌀 Buff / Debuff Aktif</div>
         <p class="hint" style="margin-bottom:6px;">
-          Pilih "Efek ke Stat" &amp; isi "Jumlah" (boleh minus). DOT = damage per giliran, HEAL = regen per giliran.
-          Kosongkan "Sisa Giliran" buat efek permanen. Status condition terkena efek akan otomatis terceklis.
+          Status & modifier di sini diatur DM lewat Battle Tracker saat battle (mis. Shield, Poisoned, Blessed) — otomatis muncul di sini begitu diterapkan, gak perlu diisi manual.
         </p>
-        <div id="buffContainer"></div>
-        <button type="button" id="btnAddBuffSheet" class="secondary small" style="margin-top:6px;">+ Tambah Efek</button>
         <div id="buffTotalsSheet" class="hint" style="margin-top:8px; line-height:1.5;"></div>
       </div>
 
@@ -479,10 +476,10 @@
           <div id="btSkillList" class="battle-skill-list"></div>
         </div>
 
-        <!-- Buff/Debuff aktif langsung dari tab Battle -->
+        <!-- Buff/Debuff aktif, diatur DM lewat Battle Tracker -->
         <div class="panel">
-          <div class="panel-header">🌀 Buff/Debuff Aktif (dari Sheet)</div>
-          <p class="hint" style="margin-bottom:6px;">Buff/debuff yang kamu atur di tab Sheet bisa langsung digunakan di battle — efek stat, DOT, HEAL, dll.</p>
+          <div class="panel-header">🌀 Buff/Debuff Aktif</div>
+          <p class="hint" style="margin-bottom:6px;">Status & modifier yang sedang aktif di karaktermu (diterapkan DM saat battle) — tampilan doang, gak perlu diisi manual.</p>
           <div id="btBuffList" class="battle-skill-list"></div>
         </div>
 
@@ -543,6 +540,39 @@
             <button id="btnPActionRoll" class="small">🎲 Roll &amp; Terapkan</button>
           </div>
           <p class="hint" id="pActionStatus" style="margin-top:4px;"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-header">⚡ Terapkan Status Condition</div>
+          <p class="hint" style="margin-bottom:6px;">Kasih buff/debuff siap-pakai ke target (musuh, ally, NPC, atau sesama PC) — angkanya otomatis, gak perlu isi formula.</p>
+          <div class="row">
+            <select id="pStatusTarget" style="flex:1;"></select>
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <select id="pStatusCondition" style="flex:1;">
+              <option value="">Pilih kondisi…</option>
+              <optgroup label="✨ Buff (angka otomatis)">
+                <option value="Regen">✨ Regen — Heal 1d6/giliran</option>
+                <option value="Shield">✨ Shield — DEF +5</option>
+                <option value="Blessed">✨ Blessed — ATK +3</option>
+              </optgroup>
+              <optgroup label="🔥 Debuff (angka otomatis)">
+                <option value="Poisoned">🔥 Poisoned — DOT 1d4/giliran</option>
+                <option value="Burn">🔥 Burn — DOT 1d6/giliran</option>
+                <option value="Bleeding">🔥 Bleeding — DOT 1d4/giliran</option>
+                <option value="Weaken">🔥 Weaken — ATK -3</option>
+                <option value="Exposed">🔥 Exposed — DEF -5</option>
+              </optgroup>
+              <optgroup label="🌀 Debuff (naratif, tanpa angka)">
+                <option value="Silenced">🌀 Silenced</option>
+                <option value="Blinded">🌀 Blinded</option>
+                <option value="Confused">🌀 Confused</option>
+                <option value="Fear">🌀 Fear</option>
+              </optgroup>
+              <option value="Normal">✓ Normal (hapus semua kondisi)</option>
+            </select>
+          </div>
+          <button type="button" id="btnPApplyStatus" class="small" style="width:100%; margin-top:6px;">⚡ Terapkan</button>
+          <p class="hint" id="pStatusStatus" style="margin-top:4px;"></p>
         </div>
       </div>
     </div>

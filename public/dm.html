@@ -87,9 +87,10 @@
 
   .npc-subpanel { border:1px dashed var(--gold); border-radius:6px; padding:8px; margin-bottom:10px; }
   .npc-subpanel-title { display:flex; justify-content:space-between; align-items:center; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:6px; }
-  .npc-equip-row, .npc-inv-row { display:flex; gap:6px; align-items:center; margin-bottom:5px; }
-  .npc-equip-row input, .npc-inv-row input[type=text] { flex:1; font-size:12px; padding:4px 6px; }
+  .npc-equip-row, .npc-inv-row { display:flex; gap:6px; align-items:center; margin-bottom:5px; flex-wrap:wrap; }
+  .npc-equip-row input, .npc-inv-row input[type=text] { flex:1; font-size:12px; padding:4px 6px; min-width:80px; }
   .npc-equip-row input.small-w, .npc-inv-row input.small-w { max-width:70px; flex:none; }
+  .npc-inv-row select { font-size:12px; padding:4px 6px; flex:none; }
   .row-remove { border:none; background:transparent; color:var(--crimson-bright); font-size:16px; padding:0 4px; cursor:pointer; }
 
   .give-item-box { border:1px solid var(--gold); border-radius:6px; padding:8px 10px; background:rgba(184,147,79,.12); margin-bottom:12px; }
@@ -145,6 +146,13 @@
   .cond-tag { display:inline-flex; align-items:center; gap:3px; background:rgba(120,90,40,.15); border-radius:4px; padding:1px 4px 1px 6px; margin-right:2px; }
   .cond-remove { border:none; background:none; cursor:pointer; color:inherit; font-size:11px; line-height:1; padding:0 2px; opacity:.7; }
   .cond-remove:hover { opacity:1; color:var(--crimson-bright); }
+
+  /* Battle Tracker: list yang bisa di-scroll sendiri + baris yang bisa diciutkan, biar gak
+     kepanjangan pas peserta battle-nya banyak. */
+  .battle-list-scroll { max-height:62vh; overflow-y:auto; padding-right:2px; }
+  .row-toggle { border:none; background:none; cursor:pointer; font-size:13px; padding:0 4px; opacity:.7; flex:none; }
+  .row-toggle:hover { opacity:1; }
+  .battle-row.row-collapsed { padding-bottom:8px; }
 </style>
 </head>
 <body>
@@ -531,9 +539,13 @@
           </div>
           <button id="btnBattleAdd" class="small" style="width:100%;">+ Tambah ke Battle</button>
         </div>
-        <p class="hint" style="margin-bottom:6px;">HP terlihat player. MP &amp; SP hanya terlihat DM.</p>
+        <p class="hint" style="margin-bottom:6px;">HP terlihat player. MP &amp; SP hanya terlihat DM. Klik nama peserta buat ciutkan/perluas detailnya.</p>
         <button id="btnRollInitiative" class="small" style="width:100%; margin-bottom:6px;">🎲 Roll Initiative Semua</button>
-        <div id="battleList"></div>
+        <div class="row" style="margin-bottom:6px;">
+          <button type="button" id="btnCollapseAllBattle" class="secondary small" style="flex:1;">▴ Ciutkan Semua</button>
+          <button type="button" id="btnExpandAllBattle" class="secondary small" style="flex:1;">▾ Perluas Semua</button>
+        </div>
+        <div id="battleList" class="battle-list-scroll"></div>
         <div class="row battle-turn-nav" style="margin-top:8px;">
           <button id="btnBattlePrev" class="secondary">‹ Prev Giliran</button>
           <button id="btnBattleNext">Next Giliran ›</button>
@@ -563,6 +575,7 @@
         <div class="row"><select id="dmActionActor" style="flex:1;"></select></div>
         <div class="row" style="margin-top:6px;"><select id="dmActionSkill" style="flex:1;"><option value="">— Formula manual —</option></select></div>
         <p class="hint" id="dmActionSkillCost" style="margin:2px 0 0;"></p>
+        <div id="npcBattleInvBox" style="margin-top:6px;"></div>
         <div class="row" style="margin-top:6px;"><select id="dmActionTarget" style="flex:1;"></select></div>
         <div class="row" style="margin-top:6px;">
           <select id="dmActionType">
@@ -906,6 +919,7 @@
     </div>
     <div class="npc-subpanel">
       <div class="npc-subpanel-title">🎒 Inventory <button type="button" class="small" id="btnAddNpcInv">+ Tambah</button></div>
+      <p class="hint" style="margin:0 0 6px;">Item dengan Tipe selain "Cuma catatan" bisa dipakai DM langsung dari panel Aksi Roll saat battle (mis. NPC minum potion sendiri).</p>
       <div id="npcInvList"></div>
     </div>
 

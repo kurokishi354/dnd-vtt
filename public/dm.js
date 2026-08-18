@@ -425,7 +425,7 @@ function renderSheetReadonly(sheet) {
 }
 
 // =============================== NPC (data table) =======================
-socket.on('npcs-update', (npcs) => { state.npcs = npcs; renderNpcs(); refreshBattleSourceOptions(); });
+socket.on('npcs-update', (npcs) => { state.npcs = npcs; renderNpcs(); refreshBattleSourceOptions(); renderNpcBattleInventory(); });
 
 function renderNpcs() {
   let list = Object.values(state.npcs || {});
@@ -483,19 +483,38 @@ function renderNpcEquipList() {
     box.appendChild(row);
   });
 }
+const NPC_INV_TYPES = [
+  ['misc', 'Cuma catatan'], ['heal', '💚 Heal'], ['damage', '⚔ Damage'],
+  ['buff', '✨ Buff'], ['debuff', '🌀 Debuff'], ['cure', '✚ Cure Status'],
+  ['revive', '💫 Revive'], ['mana_regen', '🔷 MP Regen'], ['sp_regen', '🟡 SP Regen']
+];
 function renderNpcInvList() {
   const box = document.getElementById('npcInvList'); box.innerHTML = '';
   npcEditInv.forEach((it, i) => {
+    if (it.type === undefined) it.type = 'misc'; // data lama sebelum fitur pakai-item ditambah
     const row = document.createElement('div'); row.className = 'npc-inv-row';
-    row.innerHTML = `<input type="checkbox" ${it.checked?'checked':''}><input type="text" value="${escapeAttr(it.item)}" placeholder="Nama item"><button type="button" class="row-remove">×</button>`;
-    row.querySelector('input[type=checkbox]').addEventListener('change', e => { it.checked = e.target.checked; });
-    row.querySelector('input[type=text]').addEventListener('input', e => { it.item = e.target.value; });
+    const needsFormula = it.type !== 'misc' && it.type !== 'cure';
+    row.innerHTML = `<input type="checkbox" ${it.checked?'checked':''} title="Sudah dipakai/habis">
+      <input type="text" value="${escapeAttr(it.item)}" placeholder="Nama item" data-f="item">
+      <select data-f="type">${NPC_INV_TYPES.map(([v,l])=>`<option value="${v}" ${it.type===v?'selected':''}>${l}</option>`).join('')}</select>
+      ${needsFormula ? `<input type="text" class="small-w" value="${escapeAttr(it.formula||'')}" placeholder="Formula" data-f="formula">` : ''}
+      <input type="text" class="small-w" value="${escapeAttr(it.qty||'')}" placeholder="Qty" data-f="qty">
+      <label style="flex:none; font-size:11px; display:flex; align-items:center; gap:2px;"><input type="checkbox" ${it.aoe?'checked':''} data-f="aoe"> AoE</label>
+      <button type="button" class="row-remove">×</button>`;
+    row.querySelector('input[type=checkbox][title]').addEventListener('change', e => { it.checked = e.target.checked; });
+    row.querySelectorAll('input[data-f], select[data-f]').forEach(inp => {
+      inp.addEventListener(inp.tagName==='SELECT'?'change':'input', e => {
+        const f = e.target.dataset.f;
+        it[f] = f === 'aoe' ? e.target.checked : e.target.value;
+        if (f === 'type') renderNpcInvList(); // formula field muncul/ilang sesuai tipe
+      });
+    });
     row.querySelector('.row-remove').onclick = () => { npcEditInv.splice(i,1); renderNpcInvList(); };
     box.appendChild(row);
   });
 }
 document.getElementById('btnAddNpcEquip').onclick = () => { npcEditEquip.push({nama:'',atk_bonus:'',damage:''}); renderNpcEquipList(); };
-document.getElementById('btnAddNpcInv').onclick = () => { npcEditInv.push({checked:false,item:''}); renderNpcInvList(); };
+document.getElementById('btnAddNpcInv').onclick = () => { npcEditInv.push({checked:false,item:'',type:'misc',formula:'',qty:'',aoe:false}); renderNpcInvList(); };
 
 const NPC_SKILL_ACTION_OPTIONS = [
   ['damage','⚔ Damage'],['heal','💚 Heal'],['buff','🌀 Buff'],['debuff','🌀 Debuff'],
@@ -1147,6 +1166,10 @@ function statStepperHtml(field, ro, dir) {
     : `<button type="button" class="stepper-btn" data-f="${field}" data-step="1" title="+1">+</button>`;
 }
 
+// Status ciutkan/perluas tiap baris peserta battle — disimpan terpisah dari data battle-nya sendiri
+// (cuma preferensi tampilan DM), jadi gak ke-reset tiap kali ada update dari server.
+let rowCollapsedState = new Map();
+
 function renderBattle() {
   const turn = (state.battle && state.battle.turn) || { activeId: null, round: 1 };
   document.getElementById('roundBadge').textContent = 'Round ' + (turn.round || 1);
@@ -1159,9 +1182,13 @@ function renderBattle() {
   const list = sortedBattle();
   const box = document.getElementById('battleList');
   if (!list.length) { box.innerHTML = '<p class="hint">Belum ada peserta battle.</p>'; return; }
+  // Peserta baru default keciutkan (kecuali yang lagi giliran jalan) — begitu battle rame,
+  // DM gak perlu scroll ngelewatin puluhan baris penuh HP/MP/SP/buff tiap orang.
+  list.forEach(e => { if (!rowCollapsedState.has(e.id)) rowCollapsedState.set(e.id, e.id !== turn.activeId); });
   box.innerHTML = list.map(e => {
     const isPc = e.type === 'pc';
     const ro = isPc ? 'readonly' : '';
+    const collapsed = rowCollapsedState.get(e.id);
     const elemStr = e.elements ? Object.entries(e.elements).filter(([,v])=>v&&v!=='0'&&v!=='0%').map(([k,v])=>`<span class="elem-badge">${k}:${v}</span>`).join(' ') : '';
     const condStr = (e.conditions||[]).map(c=>`<span class="hint cond-tag" data-cond="${escapeAttr(c)}">${escapeHtml(c)} <button type="button" class="cond-remove" data-cond="${escapeAttr(c)}" title="Cabut kondisi ini">×</button></span>`).join(' ');
     const isDying = (e.conditions||[]).includes('Sekarat');
@@ -1172,29 +1199,45 @@ function renderBattle() {
         <button type="button" class="small secondary death-save-btn">🎲 Death Save</button>
       </div>` : '';
     const avatarHtml = e.portrait ? `<img src="${e.portrait}" alt="" class="b-avatar-img">` : '';
-    return `<div class="battle-row ${e.id===turn.activeId?'active':''}" data-id="${e.id}">
+    const hpNow = e.hp_current ?? '-', hpMax = e.hp_max ?? '-';
+    return `<div class="battle-row ${e.id===turn.activeId?'active':''} ${collapsed?'row-collapsed':''}" data-id="${e.id}">
       <div class="roll-num">${e.roll??'-'}</div>
       <div class="b-info">
-        <div class="b-name-row">${avatarHtml}<div class="b-name">${escapeHtml(e.name)} <span class="type-pill ${e.type}">${e.type}</span>${isPc?' <span class="hint">(pantau saja)</span>':''}</div>${e.id===turn.activeId?'<span class="turn-flag">▶ GILIRAN</span>':''}</div>
+        <div class="b-name-row" style="cursor:pointer;" data-row-toggle>
+          ${avatarHtml}<div class="b-name">${escapeHtml(e.name)} <span class="type-pill ${e.type}">${e.type}</span>${isPc?' <span class="hint">(pantau saja)</span>':''}</div>${e.id===turn.activeId?'<span class="turn-flag">▶ GILIRAN</span>':''}
+          ${collapsed?`<span class="hint">❤ ${hpNow}/${hpMax}</span>`:''}
+          <button type="button" class="row-toggle" title="${collapsed?'Perluas detail':'Ciutkan detail'}">${collapsed?'▾':'▴'}</button>
+        </div>
         ${elemStr?`<div style="margin-top:2px;">${elemStr}</div>`:''}
         ${condStr?`<div style="margin-top:2px;">${condStr}</div>`:''}
-        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">HP</span>${statStepperHtml('hp_current', ro, 'minus')}<input type="number" data-f="hp_current" value="${e.hp_current??''}" placeholder="now" ${ro}>${statStepperHtml('hp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="hp_max" value="${e.hp_max??''}" placeholder="max" ${ro}></div>
-        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">MP</span>${statStepperHtml('mp_current', ro, 'minus')}<input type="number" data-f="mp_current" value="${e.mp_current??''}" placeholder="now" ${ro}>${statStepperHtml('mp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="mp_max" value="${e.mp_max??''}" placeholder="max" ${ro}></div>
-        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">SP</span>${statStepperHtml('sp_current', ro, 'minus')}<input type="number" data-f="sp_current" value="${e.sp_current??''}" placeholder="now" ${ro}>${statStepperHtml('sp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="sp_max" value="${e.sp_max??''}" placeholder="max" ${ro}></div>
-        <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">AC</span><input type="number" data-f="ac" value="${e.ac??''}" placeholder="AC" ${ro}></div>
-        ${deathSaveBlock}
-        ${!isPc ? renderEntryBuffsHtml(e) : ''}
+        <div class="battle-row-details" style="${collapsed?'display:none;':''}">
+          <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">HP</span>${statStepperHtml('hp_current', ro, 'minus')}<input type="number" data-f="hp_current" value="${e.hp_current??''}" placeholder="now" ${ro}>${statStepperHtml('hp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="hp_max" value="${e.hp_max??''}" placeholder="max" ${ro}></div>
+          <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">MP</span>${statStepperHtml('mp_current', ro, 'minus')}<input type="number" data-f="mp_current" value="${e.mp_current??''}" placeholder="now" ${ro}>${statStepperHtml('mp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="mp_max" value="${e.mp_max??''}" placeholder="max" ${ro}></div>
+          <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">SP</span>${statStepperHtml('sp_current', ro, 'minus')}<input type="number" data-f="sp_current" value="${e.sp_current??''}" placeholder="now" ${ro}>${statStepperHtml('sp_current', ro, 'plus')}<span class="hint">/</span><input type="number" data-f="sp_max" value="${e.sp_max??''}" placeholder="max" ${ro}></div>
+          <div class="row stat-row" style="margin:3px 0 0;"><span class="stat-label">AC</span><input type="number" data-f="ac" value="${e.ac??''}" placeholder="AC" ${ro}></div>
+          ${!isPc ? renderEntryBuffsHtml(e) : ''}
+        </div>
+        ${collapsed && !isDying ? '' : deathSaveBlock}
       </div>
       <button type="button" class="row-remove" title="Hapus dari battle">×</button>
     </div>`;
   }).join('');
   box.querySelectorAll('.battle-row').forEach(row => {
     const id = row.dataset.id;
+    row.querySelectorAll('.row-toggle, [data-row-toggle]').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        if (ev.target.closest('.b-name-row') && ev.target.tagName === 'IMG') return;
+        rowCollapsedState.set(id, !rowCollapsedState.get(id));
+        renderBattle();
+      });
+    });
     row.querySelectorAll('input:not([readonly])').forEach(inp => {
       inp.addEventListener('change', e => { socket.emit('dm:battle-update', { code: CODE, id, patch: { [e.target.dataset.f]: e.target.value } }); });
+      inp.addEventListener('click', e => e.stopPropagation());
     });
     row.querySelectorAll('.stepper-btn:not([disabled])').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
         const input = btn.closest('.stat-row').querySelector(`input[data-f="${btn.dataset.f}"]`);
         if (!input || input.readOnly) return;
         const next = Math.max(0, (parseFloat(input.value) || 0) + parseFloat(btn.dataset.step));
@@ -1202,7 +1245,7 @@ function renderBattle() {
         input.dispatchEvent(new Event('change', { bubbles: true }));
       });
     });
-    row.querySelector('.row-remove').onclick = () => socket.emit('dm:battle-remove', { code: CODE, id });
+    row.querySelector('.row-remove').onclick = (ev) => { ev.stopPropagation(); socket.emit('dm:battle-remove', { code: CODE, id }); };
     row.querySelectorAll('.cond-remove').forEach(btn => {
       btn.onclick = (e) => {
         e.stopPropagation();
@@ -1212,9 +1255,9 @@ function renderBattle() {
       };
     });
     const dsBtn = row.querySelector('.death-save-btn');
-    if (dsBtn) dsBtn.onclick = () => socket.emit('battle:death-save', { code: CODE, targetId: id }, (res) => {
+    if (dsBtn) dsBtn.onclick = (ev) => { ev.stopPropagation(); socket.emit('battle:death-save', { code: CODE, targetId: id }, (res) => {
       if (!res || !res.ok) alert((res && res.error) || 'Gagal roll death save.');
-    });
+    }); };
     const currentBuffs = () => JSON.parse(JSON.stringify(((state.battle.entries||{})[id]?.buffs)||[]));
     row.querySelectorAll('.entry-buffs [data-bf]').forEach(el => {
       el.addEventListener('change', e => {
@@ -1239,6 +1282,14 @@ function renderBattle() {
   });
   refreshDmActionTargetOptions();
 }
+document.getElementById('btnCollapseAllBattle').addEventListener('click', () => {
+  sortedBattle().forEach(e => rowCollapsedState.set(e.id, true));
+  renderBattle();
+});
+document.getElementById('btnExpandAllBattle').addEventListener('click', () => {
+  sortedBattle().forEach(e => rowCollapsedState.set(e.id, false));
+  renderBattle();
+});
 
 function refreshDmActionTargetOptions() {
   const sel = document.getElementById('dmActionTarget'); if (!sel) return;
@@ -1286,6 +1337,59 @@ function refreshDmActionSkillOptions() {
   }
   sel.innerHTML = options;
   document.getElementById('dmActionSkillCost').textContent = '';
+  renderNpcBattleInventory();
+}
+
+// Panel "Pakai Item" buat NPC di panel Aksi Roll — mirip punya player, tapi khusus NPC yang lagi
+// jadi Aktor. Nge-list item yang punya Tipe selain "Cuma catatan" & belum dicoret/abis.
+function renderNpcBattleInventory() {
+  const box = document.getElementById('npcBattleInvBox'); if (!box) return;
+  const actorId = document.getElementById('dmActionActor').value;
+  const entry = actorId ? (state.battle?.entries||{})[actorId] : null;
+  const npc = entry?.refType==='npc' ? (state.npcs||{})[entry.refId] : null;
+  const items = (npc?.inventory||[]).map((it,i)=>({...it, _i:i})).filter(it => it.item && it.type && it.type!=='misc' && !it.checked);
+  if (!items.length) { box.innerHTML = ''; return; }
+  const typeLabel = Object.fromEntries(NPC_INV_TYPES);
+  let html = '<p class="hint" style="margin:0 0 4px;">🎒 Item NPC (bisa langsung dipakai):</p>';
+  items.forEach(it => {
+    html += `<div class="row" style="margin-top:3px; align-items:center;">
+      <span class="hint" style="flex:1;">${escapeHtml(it.item)} <span class="hint">(${typeLabel[it.type]||it.type}${it.formula?' · '+escapeHtml(it.formula):''}${it.aoe?' · 💥AoE':''}${it.qty?' · qty '+escapeHtml(it.qty):''})</span></span>
+      <button type="button" class="small" data-npc-inv-i="${it._i}">⚡ Pakai</button>
+    </div>`;
+  });
+  box.innerHTML = html;
+  box.querySelectorAll('[data-npc-inv-i]').forEach(btn => {
+    btn.onclick = () => useNpcInventoryInBattle(entry, npc, parseInt(btn.dataset.npcInvI, 10));
+  });
+}
+
+const NPC_INV_TYPE_TO_ACTION = { heal:'heal', damage:'damage', buff:'buff', debuff:'debuff', mana_regen:'mana_regen', sp_regen:'sp_regen' };
+
+function useNpcInventoryInBattle(entry, npc, idx) {
+  const it = npc?.inventory?.[idx]; if (!it) return;
+  const targetSel = document.getElementById('dmActionTarget');
+  const targetId = targetSel ? targetSel.value : '';
+  if (!targetId) return alert('Pilih target dulu.');
+  const status = document.getElementById('dmActionStatus');
+  const effectiveTargetId = it.aoe ? (it.type==='heal'||it.type==='buff'||it.type==='cure'||it.type==='revive'||it.type==='mana_regen'||it.type==='sp_regen' ? '__aoe_ally__' : '__aoe_enemy__') : targetId;
+  const finish = (msg) => {
+    socket.emit('dm:npc-consume-item', { code: CODE, npcId: npc.id, itemIndex: idx });
+    if (status) status.textContent = msg;
+  };
+
+  if (it.type === 'cure' || it.type === 'revive') {
+    socket.emit('battle:apply-status', { code: CODE, targetId: it.aoe ? '__aoe_ally__' : targetId, condition: 'Normal', actorName: entry.name }, (res) => {
+      if (res && res.ok) finish(`✓ ${entry.name} pakai "${it.item}".`);
+      else if (status) status.textContent = res?.error || 'Gagal.';
+    });
+    return;
+  }
+  const actionType = NPC_INV_TYPE_TO_ACTION[it.type] || 'buff';
+  const formula = it.formula || '1d6';
+  socket.emit('battle:roll-action', { code: CODE, targetId: effectiveTargetId, actionType, formula, actorName: entry.name, note: `Item: ${it.item}` }, (res) => {
+    if (res && res.ok) finish(`✓ ${entry.name} pakai "${it.item}": ${formula}.`);
+    else if (status) status.textContent = res?.error || 'Gagal.';
+  });
 }
 document.getElementById('dmActionActor').addEventListener('change', refreshDmActionSkillOptions);
 document.getElementById('dmActionSkill').addEventListener('change', () => {

@@ -1542,6 +1542,21 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true, npc });
   });
 
+  // === DM: pakai 1 item dari inventory NPC saat battle (kurangi qty / coret kalau abis) ===
+  socket.on('dm:npc-consume-item', ({ code, npcId, itemIndex }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return cb && cb({ ok: false });
+    const npc = session.npcs[npcId];
+    const it = npc && Array.isArray(npc.inventory) ? npc.inventory[itemIndex] : null;
+    if (!it) return cb && cb({ ok: false, error: 'Item tidak ditemukan.' });
+    const qty = parseInt(it.qty, 10);
+    if (!isNaN(qty) && qty > 1) it.qty = qty - 1;
+    else it.checked = true; // abis / gak ada qty -> coret aja kayak checklist biasa
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('npcs-update', session.npcs);
+    cb && cb({ ok: true });
+  });
+
   socket.on('dm:delete-npc', ({ code, npcId }) => {
     const session = sessions[code];
     if (!session) return;

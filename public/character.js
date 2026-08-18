@@ -558,60 +558,6 @@ function syncConditionsFromBuffs() {
   });
 }
 
-function renderBuffsSheet() {
-  const box = document.getElementById('buffContainer');
-  if (!box) return;
-  const active = document.activeElement;
-  if (box.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT')) return;
-  box.innerHTML = `<p class="hint" style="margin-bottom:6px;">
-    <strong>DOT</strong> = damage per giliran · <strong>HEAL</strong> = regen HP per giliran · 
-    <strong>Regen MP/SP</strong> = regenerasi MP/SP per giliran.<br>
-    Jumlah boleh angka (mis. 5) atau formula dadu (mis. 1d4+2). Negatif = kebalikannya.
-    Centang "Status Condition" buat efek yang juga mengenakan kondisi pada karakter.
-  </p>`;
-  if (!buffState.length) { box.innerHTML += '<p class="hint">Belum ada efek aktif.</p>'; }
-  buffState.forEach((b, i) => {
-    const row = document.createElement('div');
-    row.style.cssText = 'border-bottom:1px solid var(--gold); padding-bottom:8px; margin-bottom:8px;';
-    row.innerHTML = `
-      <div class="row">
-        <div class="field"><label>Nama Efek</label><input type="text" data-f="nama" value="${escapeAttrVal(b.nama)}"></div>
-        <div class="field" style="max-width:100px;"><label>Jenis</label>
-          <select data-f="jenis">
-            <option value="">-</option>
-            <option value="Buff" ${b.jenis==='Buff'?'selected':''}>Buff</option>
-            <option value="Debuff" ${b.jenis==='Debuff'?'selected':''}>Debuff</option>
-          </select>
-        </div>
-      </div>
-      <div class="row">
-        <div class="field" style="max-width:160px;"><label>Efek ke Stat</label>${buffStatSelectHtml(b)}</div>
-        <div class="field" style="max-width:110px;"><label>Jumlah (+/-)</label><input type="text" data-f="jumlah" placeholder="-2 / 1d4+2" value="${escapeAttrVal(b.jumlah)}"></div>
-        <div class="field" style="max-width:110px;"><label>Sisa Giliran</label><input type="number" step="1" min="0" data-f="sisaTurn" placeholder="kosong=tetap" value="${escapeAttrVal(b.sisaTurn)}"></div>
-      </div>
-      <div class="row">
-        <div class="field"><label>Durasi / Catatan</label><input type="text" data-f="durasi" value="${escapeAttrVal(b.durasi)}"></div>
-        <div class="field" style="max-width:140px;"><label>Status Condition</label>
-          <select data-f="statusEffect">
-            ${STATUS_EFFECT_OPTIONS.map(s => `<option value="${s}" ${b.statusEffect===s?'selected':''}>${s||'(tidak ada)'}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <button type="button" class="secondary small" data-remove style="margin-top:4px;">× Hapus Efek</button>`;
-    row.querySelectorAll('[data-f]').forEach(el => {
-      const ev = () => { b[el.dataset.f] = el.value; syncConditionsFromBuffs(); renderBuffsBattle(); renderBattleStatus(); scheduleSave(); };
-      el.addEventListener('input', ev); el.addEventListener('change', ev);
-    });
-    row.querySelector('[data-remove]').addEventListener('click', () => { buffState.splice(i, 1); renderBuffsSheet(); renderBuffsBattle(); renderBattleStatus(); scheduleSave(); });
-    box.appendChild(row);
-  });
-  renderBuffTotalsSummary(document.getElementById('buffTotalsSheet'));
-}
-document.getElementById('btnAddBuffSheet').addEventListener('click', () => {
-  buffState.push({ nama: '', jenis: '', stat: '', jumlah: '', sisaTurn: '', durasi: '', statusEffect: '' });
-  renderBuffsSheet(); renderBuffsBattle(); scheduleSave();
-});
-
 function renderBuffTotalsSummary(box) {
   if (!box) return;
   const t = computeBuffTotals();
@@ -627,64 +573,27 @@ function renderBuffTotalsSummary(box) {
     : '<span class="hint">Belum ada modifier stat aktif.</span>';
 }
 
+// Read-only: daftar buff/debuff yang lagi aktif (ditempel DM lewat Battle Tracker). Player gak
+// bisa nambah/edit dari sini lagi — biar gampang & gak dobel sama sistem status DM.
 function renderBuffsBattle() {
   const box = document.getElementById('btBuffList');
   if (!box) return;
-  const active = document.activeElement;
-  if (box.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT')) return;
   box.innerHTML = '';
-  const title = document.createElement('div');
-  title.className = 'battle-skill-cat';
-  title.textContent = '🌀 Buff / Debuff Aktif';
-  box.appendChild(title);
   if (!buffState.length) {
     const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Belum ada efek aktif.'; box.appendChild(p);
+    renderBuffTotalsSummary(document.getElementById('buffTotalsSheet'));
+    return;
   }
-  buffState.forEach((b, i) => {
+  buffState.forEach((b) => {
     const row = document.createElement('div');
     row.className = 'battle-buff-row';
     const statLabel = (BUFF_STAT_OPTIONS.find(([k]) => k === b.stat) || ['','?'])[1];
     const jenis = b.jenis || '-';
     const jumlah = b.jumlah || '0';
-    row.innerHTML = `
-      <span style="flex:1;">${pEscapeHtml(b.nama || '—')} <span class="hint">${jenis} · ${statLabel} ${jumlah}</span>${b.sisaTurn ? ` <span class="hint">(${b.sisaTurn} giliran)</span>` : ' <span class="hint">(permanen)</span>'}</span>
-      <button type="button" class="small" data-usebuff="${i}" title="Terapkan efek ini ke target di battle">⚡ Terapkan</button>`;
-    // Tombol "Terapkan" langsung kirim efek ke target battle
-    row.querySelector('[data-usebuff]').addEventListener('click', () => useBuffInBattle(b));
+    row.innerHTML = `<span style="flex:1;">${pEscapeHtml(b.nama || '—')} <span class="hint">${jenis} · ${statLabel} ${jumlah}</span>${b.sisaTurn ? ` <span class="hint">(${b.sisaTurn} giliran)</span>` : ' <span class="hint">(permanen)</span>'}</span>`;
     box.appendChild(row);
   });
-  const addBtn = document.createElement('button');
-  addBtn.type = 'button'; addBtn.className = 'secondary small'; addBtn.style.cssText = 'width:100%; margin-top:4px;';
-  addBtn.textContent = '+ Tambah Efek Baru';
-  addBtn.addEventListener('click', () => {
-    buffState.push({ nama:'', jenis:'', stat:'', jumlah:'', sisaTurn:'', durasi:'', statusEffect:'' });
-    renderBuffsSheet(); renderBuffsBattle(); scheduleSave();
-  });
-  box.appendChild(addBtn);
-}
-
-function useBuffInBattle(b) {
-  const targetSel = document.getElementById('pActionTarget');
-  const targetId = targetSel ? targetSel.value : '';
-  if (!targetId) { alert('Pilih target di panel Aksi Roll dulu.'); return; }
-  const from = val('f_nama_karakter') || NAME || 'Player';
-  let actionType = b.jenis === 'Buff' ? 'buff' : 'debuff';
-  let formula = b.jumlah || '0';
-  if (b.stat === 'dot') actionType = 'damage';
-  if (b.stat === 'heal_dot') actionType = 'heal';
-  if (b.stat === 'mp_regen') actionType = 'mana_regen';
-  if (b.stat === 'sp_regen') actionType = 'sp_regen';
-  socket.emit('battle:roll-action', {
-    code: CODE, targetId, actionType, formula, actorName: from,
-    note: `Efek: ${b.nama || 'Buff/Debuff'}`
-  }, (res) => {
-    const status = document.getElementById('pActionStatus');
-    if (res && res.ok) {
-      if (status) status.textContent = `✓ Efek "${b.nama}" diterapkan: ${res.roll.total}.`;
-    } else {
-      if (status) status.textContent = res && res.error ? res.error : 'Gagal menerapkan efek.';
-    }
-  });
+  renderBuffTotalsSummary(document.getElementById('buffTotalsSheet'));
 }
 
 // =============================== COMPANIONS =============================
@@ -1129,7 +1038,7 @@ function fillForm(sheet) {
   buffState = (sheet.buffs && sheet.buffs.length)
     ? JSON.parse(JSON.stringify(sheet.buffs)).filter(b => b && (b.nama || b.jenis || b.durasi))
     : [];
-  renderBuffsSheet(); renderBuffsBattle(); syncConditionsFromBuffs();
+  renderBuffsBattle(); syncConditionsFromBuffs();
 
   // race_trait dulu array of string (flavor text doang), sekarang array of {nama,stat,amount} biar ngefek ke gameplay.
   // Data lama otomatis dikonversi: string jadi {nama: string, stat:'', amount:''} (gak ngefek, tinggal diedit manual).
@@ -1932,10 +1841,32 @@ function renderPBattle() {
     if (hasEnemy) aoeOpts.push(`<option value="__aoe_enemy__">💥 Semua Musuh (AoE)</option>`);
     if (hasAlly) aoeOpts.push(`<option value="__aoe_ally__">💥 Semua Sekutu (AoE)</option>`);
     if (list.length > 1) aoeOpts.push(`<option value="__aoe_all__">💥 Semua Peserta (AoE)</option>`);
-    targetSel.innerHTML = (aoeOpts.length ? aoeOpts.join('') : '') + (opts.join('') || '<option value="">(belum ada peserta)</option>');
+    const html = (aoeOpts.length ? aoeOpts.join('') : '') + (opts.join('') || '<option value="">(belum ada peserta)</option>');
+    targetSel.innerHTML = html;
     if (list.some(e => e.id === prevVal) || aoeOpts.some(o => o.includes(`value="${prevVal}"`))) targetSel.value = prevVal;
+    // Panel Status Condition pakai daftar target yang sama persis
+    const statusSel = document.getElementById('pStatusTarget');
+    if (statusSel) {
+      const prevVal2 = statusSel.value;
+      statusSel.innerHTML = html;
+      if (list.some(e => e.id === prevVal2) || aoeOpts.some(o => o.includes(`value="${prevVal2}"`))) statusSel.value = prevVal2;
+    }
   }
 }
+
+document.getElementById('btnPApplyStatus').addEventListener('click', () => {
+  const targetId = val('pStatusTarget');
+  if (!targetId) return alert('Belum ada target battle untuk disasar.');
+  const condition = val('pStatusCondition');
+  if (!condition) return alert('Pilih kondisi dulu.');
+  const actorName = val('f_nama_karakter') || NAME || 'Player';
+  const status = document.getElementById('pStatusStatus');
+  socket.emit('battle:apply-status', { code: CODE, targetId, condition, actorName }, (res) => {
+    if (res && res.ok) {
+      status.textContent = res.aoe ? `✓ "${condition}" diterapkan ke ${res.affected.join(', ')}.` : `✓ "${condition}" diterapkan.`;
+    } else { status.textContent = res && res.error ? res.error : 'Gagal menerapkan status.'; }
+  });
+});
 
 // Aksi Roll dengan elemental modifier
 document.getElementById('btnPActionRoll').addEventListener('click', () => {
