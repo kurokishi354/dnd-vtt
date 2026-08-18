@@ -99,6 +99,7 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 const escapeAttr = escapeHtml;
+const escapeAttrVal = escapeHtml;
 function barPct(cur, max) { const m = parseFloat(max), c = parseFloat(cur); if (!m || isNaN(m)) return 0; return Math.max(0, Math.min(100, (isNaN(c) ? m : c) / m * 100)); }
 
 // =============================== PLAYERS ==============================
