@@ -343,6 +343,25 @@ function checkDeathState(entry, prevHp) {
 // Kondisi "fatal" = karakter gak bisa bertindak sama sekali giliran itu (kaya RPG pada umumnya:
 // Stunned/Frozen/Sleep/Paralyzed), jadi battleAdvance otomatis melompati mereka.
 const FATAL_CONDITIONS = ['Stunned', 'Frozen', 'Sleep', 'Paralyzed', 'Sekarat', 'Stabil', 'Mati'];
+
+// Kondisi yang sekarang beneran "numerik" — begitu diterapkan lewat panel Status Condition,
+// server otomatis nempelin satu entri Buff/Debuff (stat + jumlah + durasi) ke target, jadi DM/player
+// gak perlu isi dua kali (kondisi doang vs buff angkanya) kayak sebelumnya. Ditandai auto:true biar
+// bisa dicari & dicabut lagi begitu kondisinya dihapus/expired, tanpa ganggu buff manual lain.
+// Positif (Buff) & negatif (Debuff) sekarang sama-sama ada, bukan cuma debuff doang.
+const CONDITION_AUTO_BUFF = {
+  Poisoned: { jenis: 'Debuff', stat: 'dot', jumlah: '1d4', sisaTurn: 3 },
+  Burn:     { jenis: 'Debuff', stat: 'dot', jumlah: '1d6', sisaTurn: 2 },
+  Bleeding: { jenis: 'Debuff', stat: 'dot', jumlah: '1d4', sisaTurn: 3 },
+  Weaken:   { jenis: 'Debuff', stat: 'atk', jumlah: '-3',  sisaTurn: 3 },
+  Exposed:  { jenis: 'Debuff', stat: 'def', jumlah: '-5',  sisaTurn: 3 },
+  Regen:    { jenis: 'Buff',   stat: 'dot', jumlah: '-1d6', sisaTurn: 3 }, // dot minus = heal per-round
+  Shield:   { jenis: 'Buff',   stat: 'def', jumlah: '5',   sisaTurn: 3 },
+  Blessed:  { jenis: 'Buff',   stat: 'atk', jumlah: '3',   sisaTurn: 3 }
+};
+// Kondisi yang gak punya efek numerik otomatis (Stunned dkk udah "fatal" = skip giliran,
+// Silenced/Blinded/Confused/Fear masih murni penanda naratif buat DM roleplay-kan sendiri).
+
 function battleAdvance(session, dir) {
   const list = sortedBattleList(session);
   if (!list.length) return { skipped: [] };
@@ -512,6 +531,42 @@ function sumBuffStat(buffs, stat) {
     }
   });
   return total;
+}
+
+// Array Buff/Debuff yang relevan buat 1 battle entry: kalau dia refType 'player', itu sheet.buffs
+// milik player-nya (biar nyambung otomatis ke tab Sheet dia); selain itu (NPC/ally/enemy custom)
+// pakai entry.buffs sendiri. Dipakai bareng biar DEF/ATK/dot ngefek konsisten ke SEMUA jenis peserta,
+// bukan cuma player doang seperti sebelumnya.
+function getBuffsArrayForEntry(session, entry) {
+  if (entry.refType === 'player' && session.players[entry.refId]) {
+    const p = session.players[entry.refId];
+    if (!Array.isArray(p.sheet.buffs)) p.sheet.buffs = [];
+    return p.sheet.buffs;
+  }
+  if (!Array.isArray(entry.buffs)) entry.buffs = [];
+  return entry.buffs;
+}
+function removeAutoBuff(buffs, condition) {
+  const idx = buffs.findIndex(b => b && b.autoFrom === condition);
+  if (idx >= 0) buffs.splice(idx, 1);
+}
+// Nempelin/nge-refresh buff numerik otomatis dari CONDITION_AUTO_BUFF pas kondisi itu diterapkan.
+// Ditandai autoFrom biar gampang dicari & dicabut lagi kalau kondisinya dihapus/expired, tanpa
+// ganggu buff manual lain yang udah diisi DM/player sendiri.
+function applyAutoBuff(buffs, condition) {
+  const def = CONDITION_AUTO_BUFF[condition];
+  if (!def) return;
+  removeAutoBuff(buffs, condition);
+  buffs.push({ nama: condition, jenis: def.jenis, stat: def.stat, jumlah: def.jumlah, sisaTurn: def.sisaTurn, autoFrom: condition });
+}
+// Broadcast perubahan buff ke client yang relevan — battle-updated aja gak cukup buat player
+// kalau yang berubah itu sheet.buffs-nya (tab Sheet dia gak dengerin battle-updated).
+function notifyEntryBuffChange(io, session, code, entry) {
+  if (entry.refType === 'player' && session.players[entry.refId]) {
+    const tp = session.players[entry.refId];
+    io.to('dm-' + code).emit('sheet-updated', { playerId: tp.id, sheet: tp.sheet });
+    if (tp.socketId) io.to(tp.socketId).emit('your-sheet-updated', { sheet: tp.sheet });
+  }
 }
 
 // Hitung nilai efek DOT dari field "jumlah", yang boleh diisi angka polos (mis. "5", "-3")
@@ -1487,6 +1542,21 @@ io.on('connection', (socket) => {
     cb && cb({ ok: true, npc });
   });
 
+  // === DM: pakai 1 item dari inventory NPC saat battle (kurangi qty / coret kalau abis) ===
+  socket.on('dm:npc-consume-item', ({ code, npcId, itemIndex }, cb) => {
+    const session = sessions[code];
+    if (!session || socket.data.role !== 'dm') return cb && cb({ ok: false });
+    const npc = session.npcs[npcId];
+    const it = npc && Array.isArray(npc.inventory) ? npc.inventory[itemIndex] : null;
+    if (!it) return cb && cb({ ok: false, error: 'Item tidak ditemukan.' });
+    const qty = parseInt(it.qty, 10);
+    if (!isNaN(qty) && qty > 1) it.qty = qty - 1;
+    else it.checked = true; // abis / gak ada qty -> coret aja kayak checklist biasa
+    saveSessionsDebounced(code);
+    io.to('dm-' + code).emit('npcs-update', session.npcs);
+    cb && cb({ ok: true });
+  });
+
   socket.on('dm:delete-npc', ({ code, npcId }) => {
     const session = sessions[code];
     if (!session) return;
@@ -1802,12 +1872,23 @@ io.on('connection', (socket) => {
   // Terapkan 1 aksi (damage/heal/buff/dll) ke 1 entry battle. Dipakai baik utk single target
   // maupun dipanggil berulang per-entry pas AoE. Gak ngirim socket event apa pun di sini —
   // biar caller yang atur emit-nya sekali aja setelah semua target selesai diproses.
-  function applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, note, elementType, elemBonus, toHitBonus }) {
+  function applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, actorEntry, note, elementType, elemBonus, toHitBonus }) {
     const map = BATTLE_ACTION_MAP[actionType];
     const roll = rollFormulaServer(formula);
     const label = BATTLE_ACTION_LABEL[actionType] || actionType;
     let noteSuffix = note ? ' — ' + note : '';
     const isAttack = actionType === 'damage' || actionType === 'ultimate';
+
+    // Bonus ATK dari buff aktif si actor. Player udah nambahin ini sendiri ke formula-nya dari sisi
+    // client (lihat computeBuffTotals().atk di character.js) — jadi di sini cuma diterapkan buat
+    // actor NON-player (NPC/ally/enemy) yang belum pernah dapet bonus ini sama sekali sebelumnya,
+    // biar Buff ATK (mis. dari status "Blessed") beneran nambah damage-nya, bukan cuma nempel doang.
+    let atkBonus = 0, atkNote = '';
+    if (isAttack && actorEntry && actorEntry.refType !== 'player') {
+      atkBonus = sumBuffStat(actorEntry.buffs, 'atk');
+      if (atkBonus) atkNote = ` [ATK ${atkBonus > 0 ? '+' : ''}${atkBonus}]`;
+    }
+    roll.total += atkBonus;
 
     // Lapar/haus di bawah 50% -> actor jadi lemah, semua aksinya (damage/heal/regen/dll) kurang efektif
     // dan lebih gampang meleset kalau nyerang. Dicek dari sheet si actor (session.players), bukan target.
@@ -1836,10 +1917,12 @@ io.on('connection', (socket) => {
       }
     }
 
+    // DEF sekarang dibaca dari sumber buff yang bener sesuai tipe target (sheet player ATAU
+    // entry.buffs milik NPC/ally/enemy) — sebelumnya cuma player yang kebaca, jadi buff DEF yang
+    // ditempel DM ke NPC/musuh lewat Battle Tracker gak pernah ngurangin damage yang masuk.
     let defReduction = 0;
-    if (isAttack && entry.refType === 'player') {
-      const targetPlayer = session.players[entry.refId];
-      const defTotal = targetPlayer ? sumBuffStat(targetPlayer.sheet && targetPlayer.sheet.buffs, 'def') : 0;
+    if (isAttack) {
+      const defTotal = sumBuffStat(getBuffsArrayForEntry(session, entry), 'def');
       if (defTotal) defReduction = Math.max(0, Math.min(roll.total + elemModifier, defTotal));
     }
 
@@ -1905,7 +1988,7 @@ io.on('connection', (socket) => {
       }
 
       const maxLabel = map.maxField && entry[map.maxField] !== '' ? '/' + entry[map.maxField] : '';
-      resultText = `${actor} pakai ${label} ke ${entry.name}${hitNote}: ${formula || '-'} = ${roll.total} (${roll.detail})${elemNote}${defNote} → ${entry.name} jadi ${next}${maxLabel}${noteSuffix}`;
+      resultText = `${actor} pakai ${label} ke ${entry.name}${hitNote}: ${formula || '-'} = ${roll.total} (${roll.detail})${atkNote}${elemNote}${defNote} → ${entry.name} jadi ${next}${maxLabel}${noteSuffix}`;
       logType = isAttack ? 'damage' : (actionType === 'heal' ? 'heal' : 'roll');
     } else {
       resultText = `${actor} pakai ${label} ke ${entry.name}: ${formula || '-'} = ${roll.total} (${roll.detail})${noteSuffix}`;
@@ -1924,11 +2007,12 @@ io.on('connection', (socket) => {
     // actorId diambil dari sesi socket (bukan payload client) biar gak bisa dipalsukan buat ngehindarin
     // debuff lapar/haus sendiri.
     const actorId = socket.data.role === 'player' ? socket.data.playerId : null;
+    const actorEntry = Object.values(session.battle.entries).find(e => e.name === actor);
 
     const results = targetIds
       .map(tid => session.battle.entries[tid])
       .filter(Boolean)
-      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, note, elementType, elemBonus, toHitBonus }));
+      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, actorEntry, note, elementType, elemBonus, toHitBonus }));
     if (!results.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
 
     saveSessionsDebounced(code);
@@ -1937,7 +2021,6 @@ io.on('connection', (socket) => {
     // Event ringan khusus buat efek visual "vs card" (attacker vs target) di klien —
     // gak nyimpen apa-apa ke session, cuma broadcast portrait & hasil roll biar semua
     // orang di room lihat dramatisasi combat-nya, bukan cuma yang ngerjain aksi.
-    const actorEntry = Object.values(session.battle.entries).find(e => e.name === actor);
     io.to('room-' + code).emit('battle:action-fx', {
       actorName: actor,
       actorPortrait: actorEntry ? actorEntry.portrait : null,
@@ -2032,20 +2115,25 @@ io.on('connection', (socket) => {
     if (!targetIds.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan (AoE: belum ada peserta yang cocok).' });
     const aoeGroup = aoeGroupFromTargetId(targetId);
     const actor = actorName || (socket.data.role === 'dm' ? 'DM' : 'Player');
-    const condText = condition === 'Normal' ? 'kondisi dihapus (Normal)' : `terkena ${condition}`;
+    const isBuff = CONDITION_AUTO_BUFF[condition] && CONDITION_AUTO_BUFF[condition].jenis === 'Buff';
+    const condText = condition === 'Normal' ? 'kondisi dihapus (Normal)' : `${isBuff ? 'mendapat' : 'terkena'} ${condition}`;
 
     const affectedNames = [];
     targetIds.forEach(tid => {
       const entry = session.battle.entries[tid];
       if (!entry) return;
       if (!Array.isArray(entry.conditions)) entry.conditions = [];
+      const buffs = getBuffsArrayForEntry(session, entry);
 
       if (condition === 'Normal') {
         entry.conditions = [];
-      } else if (!entry.conditions.includes(condition)) {
-        entry.conditions.push(condition);
+        Object.keys(CONDITION_AUTO_BUFF).forEach(c => removeAutoBuff(buffs, c));
+      } else {
+        if (!entry.conditions.includes(condition)) entry.conditions.push(condition);
+        applyAutoBuff(buffs, condition);
       }
       affectedNames.push(entry.name);
+      notifyEntryBuffChange(io, session, code, entry);
 
       if (entry.refType === 'player' && session.players[entry.refId]) {
         const tp = session.players[entry.refId];
@@ -2057,8 +2145,8 @@ io.on('connection', (socket) => {
     const logEntry = {
       id: genId('log'), from: 'Sistem',
       text: aoeGroup
-        ? `⚡ ${actor} menerapkan status ke ${AOE_GROUP_LABEL[aoeGroup]} (${affectedNames.join(', ')}): ${condText}.`
-        : `⚡ ${actor} menerapkan status: ${affectedNames[0]} ${condText}.`,
+        ? `${isBuff ? '✨' : '⚡'} ${actor} menerapkan status ke ${AOE_GROUP_LABEL[aoeGroup]} (${affectedNames.join(', ')}): ${condText}.`
+        : `${isBuff ? '✨' : '⚡'} ${actor} menerapkan status: ${affectedNames[0]} ${condText}.`,
       type: 'system', ts: Date.now(), secret: false
     };
     session.log.push(logEntry);
@@ -2068,6 +2156,35 @@ io.on('connection', (socket) => {
     io.to('room-' + code).emit('battle-updated', session.battle);
     io.to('room-' + code).emit('chat:new', logEntry);
     cb && cb({ ok: true, aoe: !!aoeGroup, affected: affectedNames });
+  });
+
+  // Cabut SATU kondisi doang (dan buff numerik otomatisnya kalau ada) dari satu peserta battle,
+  // tanpa ngereset kondisi lain yang masih aktif — pelengkap 'Normal' yang selama ini nge-clear semua.
+  socket.on('battle:remove-status', ({ code, targetId, condition }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
+    const entry = session.battle.entries[targetId];
+    if (!entry) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
+    if (!Array.isArray(entry.conditions) || !entry.conditions.includes(condition)) {
+      return cb && cb({ ok: false, error: `${entry.name} tidak sedang kena ${condition}.` });
+    }
+    entry.conditions = entry.conditions.filter(c => c !== condition);
+    const buffs = getBuffsArrayForEntry(session, entry);
+    removeAutoBuff(buffs, condition);
+    notifyEntryBuffChange(io, session, code, entry);
+
+    const logEntry = {
+      id: genId('log'), from: 'Sistem',
+      text: `✖ ${condition} pada ${entry.name} sudah dicabut.`,
+      type: 'system', ts: Date.now(), secret: false
+    };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('battle-updated', session.battle);
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
   });
 
   // === DM: kelola katalog Shop Item (CRUD + import Excel/JSON bulk) ===
