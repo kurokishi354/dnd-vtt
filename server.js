@@ -1927,19 +1927,22 @@ io.on('connection', (socket) => {
     }
 
     // === To-hit roll ala RPG: d20 vs AC target. Natural 1 = auto-meleset, natural 20 = critical hit
-    // (damage x2). Lapar/haus juga bikin akurasi turun (-1 per kondisi lemah yang aktif). ===
+    // (damage x2). Lapar/haus juga bikin akurasi turun (-1 per kondisi lemah yang aktif). Kondisi
+    // Blinded/Fear pada ACTOR (yang nyerang) sekarang beneran nurunin akurasi, bukan cuma label. ===
     let hitInfo = null, hitNote = '';
     if (isAttack) {
       const d20 = 1 + Math.floor(Math.random() * 20);
       const targetAC = parseFloat(entry.ac);
       const ac = isNaN(targetAC) ? 10 : targetAC;
-      const bonus = (parseFloat(toHitBonus) || 0) - survival.count;
+      const actorConds = (actorEntry && actorEntry.conditions) || [];
+      const condPenalty = (actorConds.includes('Blinded') ? 5 : 0) + (actorConds.includes('Fear') ? 3 : 0);
+      const bonus = (parseFloat(toHitBonus) || 0) - survival.count - condPenalty;
       if (d20 === 1) hitInfo = { result: 'miss', crit: false, d20, ac };
       else if (d20 === 20) hitInfo = { result: 'hit', crit: true, d20, ac };
       else if (d20 + bonus >= ac) hitInfo = { result: 'hit', crit: false, d20, ac };
       else hitInfo = { result: 'miss', crit: false, d20, ac };
       hitNote = hitInfo.result === 'miss'
-        ? ` — ❌ MELESET! (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`
+        ? ` — ❌ MELESET!${condPenalty?' (kena penalti kondisi)':''} (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`
         : hitInfo.crit
           ? ` — 💢 CRITICAL HIT! (d20=${hitInfo.d20})`
           : ` — 🎯 Kena (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`;
@@ -1997,22 +2000,57 @@ io.on('connection', (socket) => {
     return { entryId: entry.id, entryName: entry.name, resultText, logType, next, hit: hitInfo, roll: { ...roll, total: effectiveTotal } };
   }
 
-  socket.on('battle:roll-action', ({ code, targetId, actionType, formula, actorName, note, elementType, elemBonus, toHitBonus }, cb) => {
+  socket.on('battle:roll-action', ({ code, targetId, actionType, formula, actorName, note, elementType, elemBonus, toHitBonus, usingSkill, isReaction }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false, error: 'Sesi tidak ditemukan.' });
-    const targetIds = resolveTargetIds(session, targetId);
-    if (!targetIds.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan (AoE: belum ada peserta yang cocok).' });
-    const aoeGroup = aoeGroupFromTargetId(targetId);
     const actor = actorName || (socket.data.role === 'dm' ? 'DM' : 'Player');
-    // actorId diambil dari sesi socket (bukan payload client) biar gak bisa dipalsukan buat ngehindarin
-    // debuff lapar/haus sendiri.
     const actorId = socket.data.role === 'player' ? socket.data.playerId : null;
     const actorEntry = Object.values(session.battle.entries).find(e => e.name === actor);
+    const actorConds = (actorEntry && actorEntry.conditions) || [];
+
+    // Silenced/Fear sekarang beneran ngeblok aksi, bukan cuma label — bukan cuma lewat panel resmi,
+    // biar konsisten di manapun request-nya dateng.
+    if (usingSkill && actorConds.includes('Silenced')) {
+      return cb && cb({ ok: false, error: `${actor} sedang Silenced — gak bisa pakai skill!` });
+    }
+    if (actionType === 'ultimate' && actorConds.includes('Fear')) {
+      return cb && cb({ ok: false, error: `${actor} sedang Fear — gak bisa pakai Ultimate!` });
+    }
+    // Reaksi (opportunity attack/interrupt) — boleh dipakai di luar giliran sendiri, tapi dijatah
+    // 1x per round per karakter, ala reaction economy D&D.
+    let reactionNote = '';
+    if (isReaction) {
+      const round = (session.battle.turn && session.battle.turn.round) || 1;
+      if (actorEntry) {
+        if (actorEntry.reactionUsedRound === round) {
+          return cb && cb({ ok: false, error: `${actor} udah pakai reaksi di round ini.` });
+        }
+        actorEntry.reactionUsedRound = round;
+      }
+      reactionNote = ' 🔄[REAKSI]';
+    }
+
+    // Confused: 40% kemungkinan salah sasaran ke peserta battle lain secara acak (cuma buat target
+    // tunggal, bukan AoE, biar gak berantakan).
+    let finalTargetId = targetId;
+    let confuseNote = '';
+    if (actorConds.includes('Confused') && !aoeGroupFromTargetId(targetId) && Math.random() < 0.4) {
+      const pool = Object.values(session.battle.entries).filter(e => e.id !== targetId && (!actorEntry || e.id !== actorEntry.id));
+      if (pool.length) {
+        const randomTarget = pool[Math.floor(Math.random() * pool.length)];
+        finalTargetId = randomTarget.id;
+        confuseNote = ` 🌀 (${actor} bingung, salah sasaran ke ${randomTarget.name}!)`;
+      }
+    }
+
+    const targetIds = resolveTargetIds(session, finalTargetId);
+    if (!targetIds.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan (AoE: belum ada peserta yang cocok).' });
+    const aoeGroup = aoeGroupFromTargetId(finalTargetId);
 
     const results = targetIds
       .map(tid => session.battle.entries[tid])
       .filter(Boolean)
-      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, actorEntry, note, elementType, elemBonus, toHitBonus }));
+      .map(entry => applyActionToEntry(session, code, entry, { actionType, formula, actor, actorId, actorEntry, note: (note||'') + confuseNote + reactionNote, elementType, elemBonus, toHitBonus }));
     if (!results.length) return cb && cb({ ok: false, error: 'Target tidak ditemukan.' });
 
     saveSessionsDebounced(code);
