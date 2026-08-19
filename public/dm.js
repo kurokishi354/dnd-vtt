@@ -441,7 +441,7 @@ function renderNpcs() {
   if (!list.length) { tbody.innerHTML = `<tr><td colspan="5" class="hint">${q ? 'Tidak ada NPC yang cocok.' : 'Belum ada NPC.'}</td></tr>`; return; }
   tbody.innerHTML = list.map(n => `
     <tr data-id="${n.id}" class="npc-row">
-      <td>${escapeHtml(n.nama||'-')}</td>
+      <td>${n.portrait?`<img src="${n.portrait}" alt="" class="token-img-preview" style="display:inline-block; width:24px; height:24px; vertical-align:middle; margin-right:4px;">`:''}${escapeHtml(n.nama||'-')}</td>
       <td>${escapeHtml(n.tipe||'-')}</td>
       <td>${n.ac??'-'}</td>
       <td>${n.hp_current??0}/${n.hp_max??0}</td>
@@ -466,11 +466,11 @@ function quickAddNpcToBattle(npcId) {
   socket.emit('dm:battle-add', { code: CODE, entry: {
     name: n.nama, type: 'enemy', roll: '', hp_max: n.hp_max, hp_current: n.hp_current,
     mp_max: n.mp_max, mp_current: n.mp_current, sp_max: n.sp_max, sp_current: n.sp_current,
-    ac: n.ac, refType: 'npc', refId: n.id, elements: n.elements || {}
+    ac: n.ac, refType: 'npc', refId: n.id, elements: n.elements || {}, portrait: n.portrait || null
   }});
 }
 
-let npcEditEquip = [], npcEditInv = [];
+let npcEditEquip = [], npcEditInv = [], npcEditPortrait = null;
 let npcEditSkills = { active: [], passive: [], ultimate: [] };
 
 function renderNpcEquipList() {
@@ -554,6 +554,8 @@ document.getElementById('btnAddNpcSkillUltimate').onclick = () => { npcEditSkill
 function openNpcModal(npc) {
   document.getElementById('npcModalTitle').textContent = npc ? 'Edit NPC' : 'NPC Baru';
   document.getElementById('npc_id').value = npc?.id || '';
+  npcEditPortrait = npc?.portrait || null;
+  setNpcPortraitPreview(npcEditPortrait);
   document.getElementById('npc_nama').value = npc?.nama || '';
   document.getElementById('npc_tipe').value = npc?.tipe || '';
   document.getElementById('npc_ac').value = npc?.ac || '';
@@ -640,7 +642,7 @@ document.getElementById('btnSaveNpc').onclick = () => {
     sp_current: document.getElementById('npc_sp_current').value,
     skills: document.getElementById('npc_skills').value,
     catatan: document.getElementById('npc_catatan').value,
-    elements, equipment: npcEditEquip, inventory: npcEditInv, skillSet: npcEditSkills,
+    elements, equipment: npcEditEquip, inventory: npcEditInv, skillSet: npcEditSkills, portrait: npcEditPortrait,
     relationships: (document.getElementById('npc_id').value && state.npcs[document.getElementById('npc_id').value]?.relationships) || {}
   };
   socket.emit('dm:save-npc', { code: CODE, npc }, (res) => {
@@ -994,8 +996,29 @@ function compressImageFile(file, maxDim, quality) {
   });
 }
 
+// Potret NPC — sama kayak portrait player, dikompres ke thumbnail kecil di klien dulu.
+function setNpcPortraitPreview(dataUrl) {
+  const img = document.getElementById('npcPortraitImg');
+  const ph = document.getElementById('npcPortraitPlaceholder');
+  const rm = document.getElementById('btnRemoveNpcPortrait');
+  if (!img || !ph || !rm) return;
+  if (dataUrl) { img.src = dataUrl; img.style.display = ''; ph.style.display = 'none'; rm.style.display = ''; }
+  else { img.style.display = 'none'; img.src = ''; ph.style.display = ''; rm.style.display = 'none'; }
+}
+document.getElementById('npcPortraitWrap').addEventListener('click', () => document.getElementById('npcPortraitFile').click());
+document.getElementById('npcPortraitFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('File harus berupa gambar.'); e.target.value = ''; return; }
+  npcEditPortrait = await compressImageFile(file, 256, 0.85);
+  setNpcPortraitPreview(npcEditPortrait);
+  e.target.value = '';
+});
+document.getElementById('btnRemoveNpcPortrait').addEventListener('click', (e) => {
+  e.stopPropagation(); npcEditPortrait = null; setNpcPortraitPreview(null);
+});
+
 // =============================== TOKENS ================================
-socket.on('tokens-updated', (tokens) => { state.tokens = tokens; renderTokens(); refreshTokenOwnerOptions(); });
+socket.on('tokens-updated', (tokens) => { state.tokens = tokens; renderTokens(); refreshTokenOwnerOptions(); if (aoeCenter) computeAoeAffected(); });
 
 function refreshTokenOwnerOptions() {
   const sel = document.getElementById('tokenOwner');
@@ -1119,6 +1142,89 @@ function renderTokens() {
     mapInner.appendChild(el);
   });
 }
+
+// =============================== AoE TEMPLATE (lingkaran area di map) =====
+// Token & battle entry di project ini nyambungnya lewat NAMA yang sama (bukan ID),
+// jadi pencocokan token yang kena area juga pakai cara yang sama biar konsisten
+// sama battle-fx.js.
+let aoeMode = false;
+let aoeCenter = null; // {xPct, yPct}
+let aoeAffectedIds = [];
+
+function aoeRadiusPct() { return parseInt(document.getElementById('aoeRadius').value, 10) || 15; }
+
+function renderAoeCircle() {
+  const overlay = document.getElementById('aoeCircleOverlay');
+  if (!aoeCenter) { overlay.style.display = 'none'; return; }
+  const w = mapInner.offsetWidth || 800, h = mapInner.offsetHeight || 500;
+  const rPx = (aoeRadiusPct() / 100) * Math.min(w, h);
+  overlay.style.display = '';
+  overlay.style.left = aoeCenter.xPct + '%';
+  overlay.style.top = aoeCenter.yPct + '%';
+  overlay.style.width = (rPx * 2) + 'px';
+  overlay.style.height = (rPx * 2) + 'px';
+}
+
+function computeAoeAffected() {
+  mapInner.querySelectorAll('.token.aoe-hit').forEach(t => t.classList.remove('aoe-hit'));
+  aoeAffectedIds = [];
+  const resultBox = document.getElementById('aoeResultBox');
+  if (!aoeCenter) { resultBox.style.display = 'none'; return; }
+  const w = mapInner.offsetWidth || 800, h = mapInner.offsetHeight || 500;
+  const rPx = (aoeRadiusPct() / 100) * Math.min(w, h);
+  const battleEntries = Object.values((state.battle && state.battle.entries) || {});
+  const affectedNames = [];
+  Object.values(state.tokens || {}).forEach(tok => {
+    if (tok.isOverlay) return;
+    const dx = (tok.x - aoeCenter.xPct) * (w / 100);
+    const dy = (tok.y - aoeCenter.yPct) * (h / 100);
+    if (Math.sqrt(dx * dx + dy * dy) > rPx) return;
+    const tokenEl = mapInner.querySelector(`.token[data-id="${tok.id}"]`);
+    if (tokenEl) tokenEl.classList.add('aoe-hit');
+    const entry = battleEntries.find(e => e.name === tok.label);
+    if (entry) { aoeAffectedIds.push(entry.id); affectedNames.push(entry.name); }
+  });
+  resultBox.style.display = '';
+  resultBox.innerHTML = affectedNames.length
+    ? `🎯 Kena area: <strong>${affectedNames.map(n=>escapeHtml(n)).join(', ')}</strong> — <button type="button" id="btnAoeApplyToPanel" class="small">Pakai sebagai Target Aksi Roll</button>`
+    : 'Belum ada token battle yang kena area ini.';
+  const applyBtn = document.getElementById('btnAoeApplyToPanel');
+  if (applyBtn) applyBtn.onclick = applyAoeToActionPanel;
+}
+
+// Nembakin action/skill yang lagi diset di panel "🎯 Aksi Roll DM" ke SEMUA target yang kena
+// lingkaran AoE, satu-satu — dipilih ini (bukan nambah dukungan target custom di server) biar
+// tetap kompatibel sama skill NPC, item, elemental, dll yang udah ada tanpa ubah banyak.
+function applyAoeToActionPanel() {
+  if (!aoeAffectedIds.length) return;
+  if (!confirm(`Terapkan aksi yang lagi diset ke ${aoeAffectedIds.length} target yang kena area?`)) return;
+  aoeAffectedIds.forEach(id => performDmActionRoll(id));
+}
+
+document.getElementById('btnAoeMode').addEventListener('click', () => {
+  aoeMode = !aoeMode;
+  const btn = document.getElementById('btnAoeMode');
+  btn.textContent = aoeMode ? '🎯 Mode AoE: ON' : '🎯 Mode AoE: OFF';
+  btn.classList.toggle('active', aoeMode);
+  mapWrap.style.cursor = aoeMode ? 'crosshair' : 'grab';
+});
+document.getElementById('aoeRadius').addEventListener('input', () => { renderAoeCircle(); computeAoeAffected(); });
+document.getElementById('btnAoeClear').addEventListener('click', () => {
+  aoeCenter = null; aoeAffectedIds = [];
+  document.getElementById('aoeCircleOverlay').style.display = 'none';
+  document.getElementById('aoeResultBox').style.display = 'none';
+  mapInner.querySelectorAll('.token.aoe-hit').forEach(t => t.classList.remove('aoe-hit'));
+});
+mapWrap.addEventListener('pointerdown', (e) => {
+  if (!aoeMode || e.target.closest('.token')) return;
+  const rect = mapInner.getBoundingClientRect();
+  const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+  const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+  if (xPct < 0 || xPct > 100 || yPct < 0 || yPct > 100) return;
+  aoeCenter = { xPct, yPct };
+  renderAoeCircle();
+  computeAoeAffected();
+});
 
 // =============================== BATTLE ================================
 socket.on('battle-updated', (battle) => {
@@ -1408,12 +1514,14 @@ document.getElementById('dmActionSkill').addEventListener('change', () => {
   costEl.textContent = costParts.length ? `Cost: ${costParts.join(', ')}` : '';
 });
 
-document.getElementById('btnDmActionRoll').onclick = () => {
+function performDmActionRoll(explicitTargetId) {
   const actorId = document.getElementById('dmActionActor').value;
   if (!actorId) return alert('Pilih Aktor dulu.');
   const actorEntry = (state.battle?.entries||{})[actorId]; if (!actorEntry) return;
-  const targetId = document.getElementById('dmActionTarget').value; if (!targetId) return alert('Pilih target dulu.');
+  const targetId = explicitTargetId || document.getElementById('dmActionTarget').value; if (!targetId) return alert('Pilih target dulu.');
   const actionType = document.getElementById('dmActionType').value;
+  if ((actorEntry.conditions||[]).includes('Silenced') && document.getElementById('dmActionSkill').value) return alert(`${actorEntry.name} lagi Silenced, gak bisa pakai skill!`);
+  if ((actorEntry.conditions||[]).includes('Fear') && actionType === 'ultimate') return alert(`${actorEntry.name} lagi Fear, gak bisa pakai Ultimate!`);
   const formula = document.getElementById('dmActionFormula').value.trim() || '1d6';
   const elementType = document.getElementById('dmActionElement').value;
   const status = document.getElementById('dmActionStatus');
@@ -1425,6 +1533,7 @@ document.getElementById('btnDmActionRoll').onclick = () => {
   const targetElemPct = elementType && targetEntry?.elements ? (parseFloat(targetEntry.elements[elementType]) || 0) : 0;
 
   const skillVal = document.getElementById('dmActionSkill').value;
+  const isReaction = document.getElementById('dmActionIsReaction').checked;
   let mpCost=0, spCost=0, skillNama='', note;
   if (skillVal) {
     const [cat,idx] = skillVal.split(':');
@@ -1439,7 +1548,7 @@ document.getElementById('btnDmActionRoll').onclick = () => {
       note = `Skill: ${skillNama}${costText?' ('+costText+')':''}`;
     }
   }
-  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName: actorEntry.name, note, elementType, elemBonus: elemPct }, (res) => {
+  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName: actorEntry.name, note, elementType, elemBonus: elemPct, usingSkill: !!skillVal, isReaction }, (res) => {
     if (res && res.ok) {
       if (mpCost>0||spCost>0) {
         const patch = {};
@@ -1455,11 +1564,11 @@ document.getElementById('btnDmActionRoll').onclick = () => {
         const hitTxt = res.hit ? (res.hit.result === 'miss' ? ' — ❌ Meleset!' : res.hit.crit ? ' — 💢 Critical Hit!' : ' — 🎯 Kena!') : '';
         status.textContent = `✓ ${actorEntry.name} → ${formula} = ${res.roll.total}.${hitTxt}${elemTag}`;
       }
-      document.getElementById('dmActionFormula').value = '';
-      document.getElementById('dmActionSkill').value = '';
+      if (!explicitTargetId) { document.getElementById('dmActionFormula').value = ''; document.getElementById('dmActionSkill').value = ''; document.getElementById('dmActionIsReaction').checked = false; }
     } else { status.textContent = res?.error||'Gagal.'; }
   });
-};
+}
+document.getElementById('btnDmActionRoll').onclick = () => performDmActionRoll();
 
 // Apply status condition
 document.getElementById('btnDmApplyStatus').onclick = () => {
@@ -1962,7 +2071,13 @@ function populateDialogueNpcSelect() {
 }
 document.getElementById('dialogue_npcPick').addEventListener('change', (e) => {
   const npc = (state.npcs || {})[e.target.value];
-  if (npc) document.getElementById('dialogue_name').value = npc.nama || '';
+  if (npc) {
+    document.getElementById('dialogue_name').value = npc.nama || '';
+    if (npc.portrait) {
+      dialoguePortraitData = npc.portrait;
+      const img = document.getElementById('dialoguePreviewImg'); img.src = npc.portrait; img.style.display = '';
+    }
+  }
 });
 
 function populateHandoutTargetSelect() {

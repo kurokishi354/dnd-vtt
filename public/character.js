@@ -1590,6 +1590,8 @@ function renderBattleSkillList() {
 
 function useSkillInBattle(ds) {
   const nama = val(`sk_${ds.cat}_${ds.i}_nama`) || 'Skill';
+  const myEntry = Object.values((battleState.battle && battleState.battle.entries) || {}).find(e => e.refType === 'player' && e.refId === PLAYER_ID);
+  if (myEntry && (myEntry.conditions||[]).includes('Silenced')) { alert(`"${nama}" gak bisa dipakai — kamu lagi Silenced!`); return; }
   const mpCost = parseInt(ds.mp,10)||0;
   const spCost = parseInt(ds.sp,10)||0;
   const cdMax = parseInt(ds.cd,10)||0;
@@ -1624,7 +1626,7 @@ function useSkillInBattle(ds) {
     }
     socket.emit('battle:roll-action', {
       code: CODE, targetId, actionType, formula, actorName: from, note,
-      elementType: element, elemBonus: elemPct
+      elementType: element, elemBonus: elemPct, usingSkill: true, isReaction: document.getElementById('pActionIsReaction')?.checked || false
     }, (res) => {
       if (res && res.ok) {
         if (res.aoe) {
@@ -1884,9 +1886,10 @@ document.getElementById('btnPActionRoll').addEventListener('click', () => {
     if (atkMod) { formula = `${formula}${atkMod>0?'+':''}${atkMod}`; atkNote = ` (ATK ${fmtMod(atkMod)} otomatis ditambahkan)`; }
     toHitBonus = Math.floor(atkMod / 2);
   }
-  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName, elementType, elemBonus: elemPct, toHitBonus }, (res) => {
+  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName, elementType, elemBonus: elemPct, toHitBonus, isReaction: document.getElementById('pActionIsReaction').checked }, (res) => {
     const status = document.getElementById('pActionStatus');
     if (res && res.ok) {
+      document.getElementById('pActionIsReaction').checked = false;
       if (res.aoe) {
         const summary = (res.results||[]).map(r => `${r.entryName}${r.hit?(r.hit.result==='miss'?' (meleset)':r.hit.crit?' (CRIT!)':''):''}: ${r.roll.total}`).join(', ');
         status.textContent = `💥 AoE ${formula} diterapkan ke ${res.results.length} target — ${summary}.${atkNote}`;

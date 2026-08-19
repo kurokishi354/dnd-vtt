@@ -153,6 +153,15 @@
   .row-toggle { border:none; background:none; cursor:pointer; font-size:13px; padding:0 4px; opacity:.7; flex:none; }
   .row-toggle:hover { opacity:1; }
   .battle-row.row-collapsed { padding-bottom:8px; }
+
+  /* AoE Template: lingkaran area di atas peta + highlight token yang kena */
+  .aoe-circle-overlay {
+    position:absolute; border-radius:50%; pointer-events:none; transform:translate(-50%,-50%);
+    background:rgba(200,60,50,0.18); border:2px dashed rgba(200,60,50,0.85); z-index:15;
+  }
+  .token.aoe-hit .token-circle { box-shadow:0 0 0 3px rgba(200,60,50,0.9), 0 0 12px rgba(200,60,50,0.7); }
+  .vtt-aoe-toolbar { cursor:default; }
+  #btnAoeMode.active { background:var(--crimson-bright); color:#fff; }
 </style>
 </head>
 <body>
@@ -577,6 +586,9 @@
         <p class="hint" id="dmActionSkillCost" style="margin:2px 0 0;"></p>
         <div id="npcBattleInvBox" style="margin-top:6px;"></div>
         <div class="row" style="margin-top:6px;"><select id="dmActionTarget" style="flex:1;"></select></div>
+        <label class="hint" style="margin:6px 0 0; display:flex; align-items:center; gap:5px;" title="Aksi di luar giliran sendiri (opportunity attack/interrupt) — dijatah 1x per round per karakter.">
+          <input type="checkbox" id="dmActionIsReaction"> ⚡ Ini Reaksi (di luar giliran, maks 1x/round)
+        </label>
         <div class="row" style="margin-top:6px;">
           <select id="dmActionType">
             <option value="damage">⚔ Damage</option>
@@ -714,11 +726,23 @@
       <button id="btnFogResetAll" type="button" class="small secondary">🌫 Tutup Semua</button>
     </div>
 
+    <!-- AoE Template: gambar area serangan langsung di peta buat lihat siapa aja yang kena -->
+    <div class="map-toolbar vtt-aoe-toolbar">
+      <button id="btnAoeMode" type="button" class="small">🎯 Mode AoE: OFF</button>
+      <label class="hint" style="margin:0; display:flex; align-items:center; gap:4px;">
+        Radius <input type="range" id="aoeRadius" min="5" max="35" value="15">
+      </label>
+      <span class="hint" style="margin:0;">Klik di peta buat naruh titik pusat area.</span>
+      <button id="btnAoeClear" type="button" class="small secondary">✕ Hapus Area</button>
+    </div>
+    <div id="aoeResultBox" class="hint" style="display:none; margin-bottom:6px;"></div>
+
     <div class="map-wrap no-image" id="mapWrap">
       <img id="mapImg" class="map-img" src="" alt="" style="display:none;">
       <div id="mapInner" class="map-overlay">
         <div class="map-grid-overlay" id="gridOverlay"></div>
         <canvas id="fogLayerDm" class="fog-layer-dm" style="display:none; position:absolute; inset:0;"></canvas>
+        <div id="aoeCircleOverlay" class="aoe-circle-overlay" style="display:none;"></div>
       </div>
     </div>
     <p class="hint" style="margin-top:6px;">Peta otomatis menyesuaikan ukuran gambar asli — tidak dipotong. Drag token untuk memindahkan, klik kanan token untuk hapus. Aktifkan "Kuas Fog" lalu klik/drag di peta untuk membuka kabut.</p>
@@ -855,6 +879,15 @@
   <div class="modal-box">
     <h2 id="npcModalTitle">NPC</h2>
     <input type="hidden" id="npc_id">
+    <div class="row" style="align-items:center; margin-bottom:8px;">
+      <span class="char-portrait-wrap" id="npcPortraitWrap" title="Klik untuk upload potret NPC" style="width:56px; height:56px;">
+        <img id="npcPortraitImg" class="char-portrait-img" style="display:none;" alt="Potret NPC">
+        <span id="npcPortraitPlaceholder" class="char-portrait-placeholder">👤</span>
+        <span class="char-portrait-remove" id="btnRemoveNpcPortrait" title="Hapus potret" style="display:none;">✕</span>
+      </span>
+      <p class="hint" style="flex:1; margin:0;">Potret ini otomatis muncul di token battle & Dialog NPC di tab Cerita.</p>
+      <input type="file" id="npcPortraitFile" accept="image/*" style="display:none;">
+    </div>
     <div class="grid grid-2">
       <div class="field"><label>Nama</label><input type="text" id="npc_nama"></div>
       <div class="field"><label>Tipe / Ras</label><input type="text" id="npc_tipe"></div>
