@@ -519,6 +519,7 @@
         <div id="battleStatsBox" class="hint" style="margin-bottom:6px;"></div>
         <div class="row" style="margin-bottom:6px;">
           <button type="button" id="btnBattleStatsReset" class="small secondary">📊 Reset Statistik</button>
+          <button type="button" id="btnOpenBattleCalc" class="small secondary">🧮 Kalkulator Battle</button>
         </div>
         <div class="battle-add-box">
           <div class="row">
@@ -601,6 +602,7 @@
             <option value="ac_buff">🛡 Buff AC</option>
             <option value="ac_debuff">🛡 Debuff AC</option>
           </select>
+          <input type="number" id="dmActionToHit" placeholder="Bonus To-Hit" title="Bonus to-hit manual (cuma kepakai buat Damage/Ultimate)" style="max-width:110px;">
           <select id="dmActionElement" style="max-width:130px;">
             <option value="">- (no element)</option>
             <option value="fire">🔥 Fire</option>
@@ -996,6 +998,7 @@
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/battle-fx.js"></script>
+<script src="/battle-calc.js"></script>
 <script src="/dm.js"></script>
 </body>
 </html>

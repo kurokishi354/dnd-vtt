@@ -1770,6 +1770,7 @@ socket.on('battle-updated', (battle) => {
   }
   renderPBattle();
   if (window.BattleFX) window.BattleFX.processBattleUpdate({ prevEntries, battle, mapInnerEl: pMapInner, prevActiveId, myEntryId: myEntry && myEntry.id });
+  if (window.BattleCalc) window.BattleCalc.refresh();
 });
 socket.on('battle:action-fx', (fx) => { if (window.BattleFX) window.BattleFX.showVsCard(fx); });
 socket.on('battle-apply-status', ({ targetId, condition }) => {
@@ -1901,6 +1902,18 @@ document.getElementById('btnPActionRoll').addEventListener('click', () => {
     } else { status.textContent = res && res.error ? res.error : 'Gagal menerapkan aksi.'; }
   });
 });
+
+// ---- Kalkulator Battle (to-hit/damage manual, dice cepat, statistik) ----
+if (window.BattleCalc) {
+  window.BattleCalc.init({
+    getState: () => battleState,
+    role: 'player',
+    fields: { formula: 'pActionFormula', target: 'pActionTarget', type: 'pActionType' },
+    onFilled: () => { document.getElementById('pActionFormula').focus(); }
+  });
+}
+const btnOpenBattleCalcEl = document.getElementById('btnOpenBattleCalc');
+if (btnOpenBattleCalcEl) btnOpenBattleCalcEl.onclick = () => window.BattleCalc && window.BattleCalc.open();
 
 // =============================== DICE LOG / CHAT ========================
 socket.on('chat:new', (entry) => {

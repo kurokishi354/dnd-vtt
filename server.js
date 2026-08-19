@@ -479,6 +479,17 @@ function rollFormulaServer(formula) {
   return { total, detail: `${rolls.join('+')}${mod ? (mod > 0 ? '+' + mod : mod) : ''}` };
 }
 
+// Ambil (atau buat baru) baris statistik battle utk 1 nama (actor ATAU target) —
+// dipakai bareng oleh hit/miss/crit (sudah ada sebelumnya) dan total damage/heal
+// dealt-vs-taken (buat tab "📊 Statistik" di Kalkulator Battle).
+function ensureBattleStat(session, name) {
+  if (!session.battle.stats) session.battle.stats = {};
+  if (!session.battle.stats[name]) {
+    session.battle.stats[name] = { hits: 0, misses: 0, crits: 0, dmgDealt: 0, healDone: 0, dmgTaken: 0, healReceived: 0 };
+  }
+  return session.battle.stats[name];
+}
+
 // Aksi roll battle: tiap actionType memetakan ke field mana di battle entry yang berubah
 const BATTLE_ACTION_MAP = {
   damage:     { field: 'hp_current', sign: -1, maxField: 'hp_max' },
@@ -1947,9 +1958,7 @@ io.on('connection', (socket) => {
           ? ` — 💢 CRITICAL HIT! (d20=${hitInfo.d20})`
           : ` — 🎯 Kena (d20=${hitInfo.d20} vs AC ${hitInfo.ac})`;
       // Statistik hit/miss/crit per actor, buat ditampilin DM (reset manual per sesi/battle).
-      if (!session.battle.stats) session.battle.stats = {};
-      if (!session.battle.stats[actor]) session.battle.stats[actor] = { hits: 0, misses: 0, crits: 0 };
-      const st = session.battle.stats[actor];
+      const st = ensureBattleStat(session, actor);
       if (hitInfo.result === 'miss') st.misses++; else { st.hits++; if (hitInfo.crit) st.crits++; }
     }
 
@@ -1993,6 +2002,16 @@ io.on('connection', (socket) => {
       const maxLabel = map.maxField && entry[map.maxField] !== '' ? '/' + entry[map.maxField] : '';
       resultText = `${actor} pakai ${label} ke ${entry.name}${hitNote}: ${formula || '-'} = ${roll.total} (${roll.detail})${atkNote}${elemNote}${defNote} → ${entry.name} jadi ${next}${maxLabel}${noteSuffix}`;
       logType = isAttack ? 'damage' : (actionType === 'heal' ? 'heal' : 'roll');
+
+      // Total damage/heal dealt-vs-taken per nama, buat tab "📊 Statistik" di Kalkulator Battle.
+      // Damage/Ultimate yang MELESET gak dihitung (effectiveTotal udah 0 di kasus itu).
+      if ((actionType === 'damage' || actionType === 'ultimate') && effectiveTotal > 0) {
+        ensureBattleStat(session, actor).dmgDealt += effectiveTotal;
+        ensureBattleStat(session, entry.name).dmgTaken += effectiveTotal;
+      } else if (actionType === 'heal' && effectiveTotal > 0) {
+        ensureBattleStat(session, actor).healDone += effectiveTotal;
+        ensureBattleStat(session, entry.name).healReceived += effectiveTotal;
+      }
     } else {
       resultText = `${actor} pakai ${label} ke ${entry.name}: ${formula || '-'} = ${roll.total} (${roll.detail})${noteSuffix}`;
     }

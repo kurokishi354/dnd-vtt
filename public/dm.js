@@ -1233,6 +1233,7 @@ socket.on('battle-updated', (battle) => {
   state.battle = battle;
   renderBattle();
   if (window.BattleFX) window.BattleFX.processBattleUpdate({ prevEntries, battle, mapInnerEl: mapInner, prevActiveId });
+  if (window.BattleCalc) window.BattleCalc.refresh();
 });
 socket.on('battle:action-fx', (fx) => { if (window.BattleFX) window.BattleFX.showVsCard(fx); });
 
@@ -1548,7 +1549,8 @@ function performDmActionRoll(explicitTargetId) {
       note = `Skill: ${skillNama}${costText?' ('+costText+')':''}`;
     }
   }
-  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName: actorEntry.name, note, elementType, elemBonus: elemPct, usingSkill: !!skillVal, isReaction }, (res) => {
+  const toHitBonus = parseFloat(document.getElementById('dmActionToHit')?.value) || 0;
+  socket.emit('battle:roll-action', { code: CODE, targetId, actionType, formula, actorName: actorEntry.name, note, elementType, elemBonus: elemPct, toHitBonus, usingSkill: !!skillVal, isReaction }, (res) => {
     if (res && res.ok) {
       if (mpCost>0||spCost>0) {
         const patch = {};
@@ -1812,6 +1814,19 @@ document.getElementById('btnExportLog').onclick = () => {
 document.getElementById('btnBattleStatsReset').onclick = () => {
   if (confirm('Reset statistik hit/miss/crit battle?')) socket.emit('dm:battle-reset-stats', { code: CODE });
 };
+
+// ---- Kalkulator Battle (to-hit/damage manual, dice cepat, statistik) ----
+if (window.BattleCalc) {
+  window.BattleCalc.init({
+    getState: () => state,
+    role: 'dm',
+    fields: { formula: 'dmActionFormula', target: 'dmActionTarget', type: 'dmActionType', toHit: 'dmActionToHit' },
+    resetStats: () => socket.emit('dm:battle-reset-stats', { code: CODE }),
+    onFilled: () => { document.getElementById('dmActionFormula').focus(); }
+  });
+}
+const btnOpenBattleCalcEl = document.getElementById('btnOpenBattleCalc');
+if (btnOpenBattleCalcEl) btnOpenBattleCalcEl.onclick = () => window.BattleCalc && window.BattleCalc.open();
 document.getElementById('btnSendChat').onclick = () => sendChat('chatInput', 'dmRollSecret');
 document.getElementById('chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat('chatInput', 'dmRollSecret'); });
 document.getElementById('btnBattleSendChat').onclick = () => sendChat('battleChatInput', 'battleRollSecret');
