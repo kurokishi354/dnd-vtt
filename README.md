@@ -159,7 +159,20 @@ Tab baru **📖 Cerita** (DM Board) berisi 5 fitur yang saling melengkapi untuk 
 - **🎁 Handout (kirim dokumen)**: DM kirim gambar/surat/catatan ke satu player tertentu atau semua sekaligus — muncul sebagai popup di layar penerima, plus notifikasi kecil di pojok layar.
 - **⭐ Recap / Riwayat Cerita**: panel yang otomatis merangkum semua momen cerita (scene, dialog, quest, handout) secara kronologis — cocok dipakai DM untuk baca ulang "sebelumnya di sesi ini..." sebelum mulai sesi berikutnya. DM juga bisa menandai entri log biasa di tab Utama dengan tombol ⭐ supaya ikut masuk ke Recap ini.
 
-Player bisa lihat Quest & Recap lewat tab **📖 Cerita** di sheet-nya (read-only) — Scene Banner dan Dialog NPC muncul otomatis sebagai overlay dari tab manapun yang sedang dibuka.
+Player bisa lihat Quest & Recap lewat tab **📖 Cerita** di sheet-nya (read-only) — Scene Banner dan Dialog NPC muncul otomatis sebagai overlay dari tab manapun yang sedang dibuka, dengan animasi fade/slide halus saat muncul & hilang.
+
+**Peningkatan tambahan:**
+- **Scene Banner**: bisa diisi "Auto-sembunyi setelah X detik" — kalau diisi, banner otomatis hilang sendiri di layar player tanpa DM perlu klik "Sembunyikan" (kosongkan untuk mode manual seperti biasa).
+- **Dialog NPC**: panel DM sekarang menampilkan **riwayat 5 dialog terakhir** dengan tombol "↻ Pakai lagi" untuk cepat mengulang nama & isi dialog NPC yang sama.
+- **Handout**: panel DM menampilkan **riwayat 5 dokumen terakhir** yang dikirim, dengan tombol "↻ Kirim lagi" (isi judul, teks, dan gambar otomatis terisi ulang ke form).
+- **Quest Tracker**: quest sekarang punya **Prioritas** (Rendah/Sedang/Tinggi) yang ditandai badge warna di kartu quest, dan daftar quest otomatis diurutkan: Aktif dulu, lalu berdasar prioritas tertinggi.
+- **Recap**: baik di DM Board maupun sheet player, panel Recap sekarang punya **tombol filter** (Semua / 🎬 Scene / 💬 Dialog / 📜 Quest / 🎁 Handout) supaya gampang menyusuri riwayat satu jenis momen cerita saja.
+
+**Fitur baru babak 2:**
+- **Scene + Musik otomatis**: pas menampilkan Scene Banner, DM bisa pilih lagu dari playlist Musik — begitu banner tampil ke semua player, lagunya ikut otomatis diputar bareng.
+- **Babak/Chapter di Recap**: DM bisa menandai "Babak 1: Gerbang Hutan", "Babak 2: Reruntuhan Kuno", dst — jadi divider di tengah Recap, memisahkan riwayat cerita jadi babak-babak yang jelas (muncul di DM Board & sheet player).
+- **Mood NPC di Dialog**: tiap kali DM "Katakan" dialog, bisa pilih mood NPC (😐 Netral/😄 Senang/😠 Marah/🤨 Curiga/😢 Sedih/😨 Takut) — kotak dialog di layar player berubah warna border & ikon ekspresi sesuai mood, biar lebih hidup.
+- **Cliffhanger / Ringkasan Sesi Lalu**: DM bisa nulis 1 paragraf "sebelumnya di sesi ini…" yang otomatis nongol sebagai kotak highlight di paling atas tab Cerita player — pas buat mulai sesi baru.
 
 
 ## 5. Struktur folder

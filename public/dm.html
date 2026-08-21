@@ -108,6 +108,15 @@
 
   /* Story-telling: scene/dialogue status badges, quest list, recap feed */
   #sceneStatusBadge.active, #dialogueStatusBadge.active { background: var(--emerald); color: #eafff3; }
+  #storyRecapFilter button.active { background:var(--gold); color:#fff; border-color:var(--gold); }
+  .story-recap-chapter { margin:10px 0 4px; padding:4px 8px; background:var(--navy); color:var(--gold-bright); font-family:'Cinzel',serif; font-size:12px; letter-spacing:.04em; border-radius:4px; text-align:center; }
+  .story-recap-chapter:first-child { margin-top:0; }
+  .story-history-item { font-size:11px; padding:4px 6px; border-bottom:1px dotted var(--gold); display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  .story-history-item:last-child { border-bottom:none; }
+  .quest-priority-badge { font-size:9px; padding:1px 6px; border-radius:8px; font-weight:700; margin-right:4px; }
+  .quest-priority-badge.tinggi { background:var(--crimson); color:#fff2ee; }
+  .quest-priority-badge.sedang { background:#e8d27a; color:#4a3c00; }
+  .quest-priority-badge.rendah { background:#d8d8d8; color:#444; }
   .quest-card { border:1px solid var(--gold); border-radius:6px; padding:8px 10px; margin-bottom:8px; background:#fffdf7; }
   .quest-card-top { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px; }
   .quest-card-title { font-weight:700; color:var(--navy); font-size:13px; }
@@ -429,6 +438,9 @@
 
   <!-- ===== TAB: CERITA (Scene Banner, Dialog NPC, Quest, Handout, Recap) ===== -->
   <div id="tab-dm-story" style="display:none;">
+  <p class="hint" style="margin:0 0 10px; padding:8px 10px; border:1px dashed var(--gold); border-radius:6px;">
+    ℹ️ Semua yang kamu kirim/tampilkan di sini <b>otomatis muncul di layar semua player</b> — mereka tidak punya kontrol apa pun di tab ini, cuma menerima. Scene Banner &amp; Dialog NPC tampil sebagai overlay di atas tab manapun yang sedang player buka; Quest &amp; Recap juga bisa mereka baca (read-only) lewat tab 📖 Cerita di sheet masing-masing.
+  </p>
   <div class="dm-grid cols-2-even">
     <div>
       <div class="panel">
@@ -439,6 +451,10 @@
         <div class="row" style="margin-bottom:6px;">
           <input type="file" id="sceneImageUpload" accept="image/*" style="flex:1;">
           <button type="button" class="small secondary" id="btnSceneImageClear">Hapus Gambar</button>
+        </div>
+        <div class="field"><label>Auto-sembunyi setelah (detik, kosongkan = manual)</label><input type="number" id="scene_duration" min="1" placeholder="mis. 8"></div>
+        <div class="field"><label>Putar musik saat tampil (opsional)</label>
+          <select id="scene_musicTrack"><option value="">— Tidak putar musik —</option></select>
         </div>
         <img id="scenePreviewImg" style="display:none; max-width:100%; border:1px solid var(--gold); border-radius:6px; margin-bottom:8px;">
         <div class="row">
@@ -454,6 +470,16 @@
           <select id="dialogue_npcPick" style="flex:1;"><option value="">— Pilih dari NPC (opsional) —</option></select>
         </div>
         <div class="field"><label>Nama Pembicara</label><input type="text" id="dialogue_name" placeholder="mis. Penjaga Gerbang"></div>
+        <div class="field"><label>Mood/Ekspresi</label>
+          <select id="dialogue_mood">
+            <option value="netral">😐 Netral</option>
+            <option value="senang">😄 Senang</option>
+            <option value="marah">😠 Marah</option>
+            <option value="curiga">🤨 Curiga</option>
+            <option value="sedih">😢 Sedih</option>
+            <option value="takut">😨 Takut</option>
+          </select>
+        </div>
         <div class="row" style="margin-bottom:6px;">
           <input type="file" id="dialoguePortraitUpload" accept="image/*" style="flex:1;">
           <button type="button" class="small secondary" id="btnDialoguePortraitClear">Hapus Potret</button>
@@ -464,6 +490,7 @@
           <button type="button" class="small" id="btnDialogueSay" style="flex:1;">🗣 Katakan</button>
           <button type="button" class="small secondary" id="btnDialogueHide" style="flex:1;">✖ Tutup Dialog</button>
         </div>
+        <div id="dialogueHistoryList" style="margin-top:8px;"></div>
       </div>
     </div>
 
@@ -474,11 +501,18 @@
         <div class="field"><label>Judul Quest</label><input type="text" id="quest_title" placeholder="mis. Temukan Kristal yang Hilang"></div>
         <div class="field"><label>Deskripsi</label><textarea id="quest_desc" rows="2" placeholder="Detail/objektif quest…"></textarea></div>
         <div class="row" style="margin-bottom:6px;">
+          <select id="quest_priority" style="flex:1;">
+            <option value="rendah">⬇ Prioritas Rendah</option>
+            <option value="sedang" selected>➡ Prioritas Sedang</option>
+            <option value="tinggi">⬆ Prioritas Tinggi</option>
+          </select>
           <select id="quest_status" style="flex:1;">
             <option value="aktif">🟡 Aktif</option>
             <option value="selesai">✅ Selesai</option>
             <option value="gagal">❌ Gagal</option>
           </select>
+        </div>
+        <div class="row" style="margin-bottom:6px;">
           <button type="button" class="small" id="btnQuestSave" style="flex:1;">💾 Simpan Quest</button>
           <button type="button" class="small secondary" id="btnQuestResetForm">Batal Edit</button>
         </div>
@@ -499,13 +533,32 @@
         </div>
         <img id="handoutPreviewImg" style="display:none; max-width:100%; border:1px solid var(--gold); border-radius:6px; margin-bottom:8px;">
         <button type="button" class="small" id="btnHandoutSend" style="width:100%;">🎁 Kirim Dokumen</button>
+        <div id="handoutHistoryList" style="margin-top:8px;"></div>
       </div>
     </div>
   </div>
 
   <div class="panel">
+    <div class="panel-header">📝 Ringkasan Sesi Lalu (Cliffhanger)</div>
+    <p class="hint" style="margin-bottom:6px;">1 paragraf pembuka yang tampil di atas tab Cerita player — cocok buat "Sebelumnya, di sesi ini…" pas mulai sesi baru.</p>
+    <textarea id="recapIntroText" rows="3" placeholder="mis. Para petualang baru saja lolos dari jebakan di Reruntuhan Kuno, tapi sang penyihir bayangan masih mengejar…"></textarea>
+    <button type="button" class="small" id="btnRecapIntroSave" style="width:100%; margin-top:6px;">💾 Simpan &amp; Tampilkan</button>
+  </div>
+
+  <div class="panel">
     <div class="panel-header">⭐ Recap / Riwayat Cerita</div>
     <p class="hint" style="margin-bottom:6px;">Berisi semua momen cerita (adegan, dialog, quest, dokumen) plus entri log yang ditandai ⭐ dari tab Utama — cocok untuk ringkasan "sebelumnya di sesi ini…".</p>
+    <div class="row" style="margin-bottom:6px;">
+      <input type="text" id="chapterTitleInput" placeholder="mis. Babak 2: Reruntuhan Kuno" style="flex:1;">
+      <button type="button" class="small secondary" id="btnChapterMark">🏷 Tandai Babak</button>
+    </div>
+    <div class="row" id="storyRecapFilter" style="margin-bottom:8px; flex-wrap:wrap;">
+      <button type="button" class="small secondary active" data-filter="semua">Semua</button>
+      <button type="button" class="small secondary" data-filter="narrative">🎬 Scene</button>
+      <button type="button" class="small secondary" data-filter="dialogue">💬 Dialog</button>
+      <button type="button" class="small secondary" data-filter="quest">📜 Quest</button>
+      <button type="button" class="small secondary" data-filter="handout">🎁 Handout</button>
+    </div>
     <div id="storyRecapList"><p class="hint">Belum ada momen cerita.</p></div>
   </div>
   </div><!-- /tab-dm-story -->

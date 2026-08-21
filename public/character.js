@@ -1953,16 +1953,25 @@ function renderDiceLog() {
 }
 
 // =============================== STORY (Scene Banner / Dialog / Quest / Handout) ===
+let sceneAutoHideTimer = null;
 function renderSceneBanner() {
   const scene = (storyState && storyState.scene) || {};
   const el = document.getElementById('sceneBanner'); if (!el) return;
   const isNew = (scene.updatedAt || 0) > sceneBannerDismissedAt;
+  if (sceneAutoHideTimer) { clearTimeout(sceneAutoHideTimer); sceneAutoHideTimer = null; }
   if (scene.active && isNew) {
     el.classList.add('show');
     document.getElementById('sceneBannerTitle').textContent = scene.title || '';
     document.getElementById('sceneBannerDesc').textContent = scene.desc || '';
     const img = document.getElementById('sceneBannerImg');
     if (scene.imageUrl) { img.src = scene.imageUrl; img.style.display = ''; } else { img.style.display = 'none'; img.src = ''; }
+    if (scene.duration) {
+      sceneAutoHideTimer = setTimeout(() => {
+        sceneBannerDismissedAt = Date.now();
+        localStorage.setItem('dnd_scene_dismissed_' + CODE, String(sceneBannerDismissedAt));
+        el.classList.remove('show');
+      }, scene.duration);
+    }
   } else {
     el.classList.remove('show');
   }
@@ -1971,6 +1980,7 @@ document.getElementById('btnSceneBannerClose').addEventListener('click', () => {
   sceneBannerDismissedAt = Date.now();
   localStorage.setItem('dnd_scene_dismissed_' + CODE, String(sceneBannerDismissedAt));
   document.getElementById('sceneBanner').classList.remove('show');
+  if (sceneAutoHideTimer) { clearTimeout(sceneAutoHideTimer); sceneAutoHideTimer = null; }
 });
 socket.on('scene-updated', (scene) => {
   storyState.scene = scene;
@@ -1987,6 +1997,11 @@ function renderDialogueBox() {
     el.classList.add('show');
     document.getElementById('dialogueNameEl').textContent = dlg.npcName || 'NPC';
     document.getElementById('dialogueTextEl').textContent = dlg.text || '';
+    const moodMap = { netral: '😐', senang: '😄', marah: '😠', curiga: '🤨', sedih: '😢', takut: '😨' };
+    const moodEl = document.getElementById('dialogueMoodEl');
+    if (moodEl) moodEl.textContent = moodMap[dlg.mood] || '';
+    const inner = document.getElementById('dialogueBoxInner');
+    if (inner) inner.className = 'dialogue-box-inner mood-' + (dlg.mood || 'netral');
     const img = document.getElementById('dialoguePortraitImg');
     if (dlg.npcPortrait) { img.src = dlg.npcPortrait; img.style.display = ''; } else { img.style.display = 'none'; img.src = ''; }
     document.getElementById('dialogueSelfNameEl').textContent = val('f_nama_karakter') || NAME || 'Kamu';
@@ -2010,9 +2025,16 @@ socket.on('dialogue-updated', (dialogue) => {
   if (document.getElementById('tab-story').style.display !== 'none') renderStoryPlayer();
 });
 
+const QUEST_PRIORITY_RANK_P = { tinggi: 2, sedang: 1, rendah: 0 };
 function renderPlayerQuestList() {
   const box = document.getElementById('pQuestList'); if (!box) return;
-  const quests = Object.values((storyState && storyState.quests) || {}).sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
+  const quests = Object.values((storyState && storyState.quests) || {}).sort((a,b) => {
+    const statusRank = (s) => s === 'aktif' ? 1 : 0;
+    if (statusRank(b.status) !== statusRank(a.status)) return statusRank(b.status) - statusRank(a.status);
+    const pr = (QUEST_PRIORITY_RANK_P[b.priority] ?? 1) - (QUEST_PRIORITY_RANK_P[a.priority] ?? 1);
+    if (pr !== 0) return pr;
+    return (b.updatedAt||0)-(a.updatedAt||0);
+  });
   if (!quests.length) { box.innerHTML = '<p class="hint">Belum ada quest.</p>'; return; }
   box.innerHTML = quests.map(q => {
     const mine = (q.acceptedBy || {})[PLAYER_ID];
@@ -2025,6 +2047,8 @@ function renderPlayerQuestList() {
       actionHtml = `<p class="hint" style="margin-top:6px;">✅ Kamu sudah menandai quest ini selesai — menunggu konfirmasi DM.</p>`;
     }
     const objectives = q.objectives || [];
+    const priority = q.priority || 'sedang';
+    const priorityLabel = priority === 'tinggi' ? '⬆ Tinggi' : priority === 'rendah' ? '⬇ Rendah' : '➡ Sedang';
     const objLine = (mine && objectives.length) ? `
       <div class="quest-objectives" style="margin-top:6px;">
         ${objectives.map(o => `
@@ -2039,7 +2063,7 @@ function renderPlayerQuestList() {
     return `
     <div class="quest-card">
       <div class="quest-card-top">
-        <span class="quest-card-title">${pEscapeHtml(q.title)}</span>
+        <span class="quest-card-title"><span class="quest-priority-badge ${priority}">${priorityLabel}</span>${pEscapeHtml(q.title)}</span>
         <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
       </div>
       ${q.desc ? `<div class="quest-card-desc">${pEscapeHtml(q.desc)}</div>` : ''}
@@ -2069,18 +2093,35 @@ socket.on('quests-updated', (quests) => {
   if (document.getElementById('tab-story').style.display !== 'none') renderStoryRecapPlayer();
 });
 
-const STORY_LOG_TYPES_P = ['narrative','scene','dialogue','quest','handout'];
+const STORY_LOG_TYPES_P = ['narrative','scene','dialogue','quest','handout','chapter'];
+let pStoryRecapFilter = 'semua';
+document.querySelectorAll('#pStoryRecapFilter button').forEach(btn => {
+  btn.onclick = () => {
+    pStoryRecapFilter = btn.dataset.filter;
+    document.querySelectorAll('#pStoryRecapFilter button').forEach(b => b.classList.toggle('active', b === btn));
+    renderStoryRecapPlayer();
+  };
+});
 function renderStoryRecapPlayer() {
   const box = document.getElementById('pStoryRecapList'); if (!box) return;
-  const entries = diceLog.filter(e => STORY_LOG_TYPES_P.includes(e.type)).sort((a,b) => (a.ts||0)-(b.ts||0));
+  const all = diceLog.filter(e => STORY_LOG_TYPES_P.includes(e.type)).sort((a,b) => (a.ts||0)-(b.ts||0));
+  const entries = pStoryRecapFilter === 'semua' ? all : all.filter(e => e.type === pStoryRecapFilter || e.type === 'chapter');
   if (!entries.length) { box.innerHTML = '<p class="hint">Belum ada momen cerita.</p>'; return; }
-  box.innerHTML = entries.map(e => `
-    <div class="story-recap-entry">
+  box.innerHTML = entries.map(e => e.type === 'chapter'
+    ? `<div class="story-recap-chapter">🏷 ${pEscapeHtml(e.text)}</div>`
+    : `<div class="story-recap-entry">
       <span class="from">${pEscapeHtml(e.from)}:</span> ${pEscapeHtml(e.text)}
       ${e.ts ? `<span class="ts">${new Date(e.ts).toLocaleString()}</span>` : ''}
     </div>`).join('');
 }
-function renderStoryPlayer() { renderPlayerQuestList(); renderStoryRecapPlayer(); }
+function renderRecapIntro() {
+  const box = document.getElementById('recapIntroBox'); const txt = document.getElementById('recapIntroTextEl');
+  if (!box || !txt) return;
+  const intro = (storyState && storyState.recapIntro) || '';
+  if (intro) { txt.textContent = intro; box.classList.add('show'); } else { box.classList.remove('show'); }
+}
+socket.on('recap-intro-updated', (text) => { storyState.recapIntro = text; renderRecapIntro(); });
+function renderStoryPlayer() { renderPlayerQuestList(); renderStoryRecapPlayer(); renderRecapIntro(); }
 
 // ---- Handout modal ----
 function openHandoutModal(handout) {

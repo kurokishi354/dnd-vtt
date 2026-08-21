@@ -130,9 +130,10 @@ function blankMusic() {
 // ---------- Story-telling: scene banner, dialog NPC, quest tracker ----------
 function blankStory() {
   return {
-    scene: { title: '', desc: '', imageUrl: null, active: false, updatedAt: 0 },
-    dialogue: { npcName: '', npcPortrait: null, text: '', active: false, updatedAt: 0 },
-    quests: {}
+    scene: { title: '', desc: '', imageUrl: null, active: false, updatedAt: 0, duration: null },
+    dialogue: { npcName: '', npcPortrait: null, text: '', active: false, updatedAt: 0, mood: 'netral' },
+    quests: {},
+    recapIntro: ''
   };
 }
 
@@ -186,8 +187,12 @@ function ensureSessionDefaults(session) {
   if (!session.story.scene) session.story.scene = blankStory().scene;
   if (!session.story.dialogue) session.story.dialogue = blankStory().dialogue;
   if (!session.story.quests) session.story.quests = {};
+  if (typeof session.story.recapIntro !== 'string') session.story.recapIntro = '';
   // Migrasi quest lama (sebelum fitur "ambil quest") biar punya daftar player yang ambil/selesaikan
-  Object.values(session.story.quests).forEach(q => { if (!q.acceptedBy) q.acceptedBy = {}; });
+  Object.values(session.story.quests).forEach(q => {
+    if (!q.acceptedBy) q.acceptedBy = {};
+    if (!['rendah','sedang','tinggi'].includes(q.priority)) q.priority = 'sedang';
+  });
   // Migrasi peta lama (1 map + 1 dict token flat) -> banyak map, tiap map punya token & fog sendiri.
   // Biar bisa DM benar-benar bikin "Map 2", "Map 3" dst (mis. per lantai dungeon) tanpa numpuk token lintas map.
   if (!session.maps) {
@@ -2443,17 +2448,27 @@ io.on('connection', (socket) => {
   });
 
   // === Story: Scene Banner (adegan saat ini, tersiar ke semua player) ===
-  socket.on('dm:scene-set', ({ code, title, desc, imageUrl }, cb) => {
+  socket.on('dm:scene-set', ({ code, title, desc, imageUrl, duration, musicTrackId }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false });
     if (socket.data.role !== 'dm') return cb && cb({ ok: false });
     ensureSessionDefaults(session);
     if (!title || !title.trim()) return cb && cb({ ok: false, error: 'Isi judul adegan.' });
+    const dur = Number(duration);
     session.story.scene = {
       title: title.trim(), desc: (desc || '').trim(),
       imageUrl: imageUrl !== undefined ? imageUrl : session.story.scene.imageUrl,
-      active: true, updatedAt: Date.now()
+      active: true, updatedAt: Date.now(),
+      duration: (dur && dur > 0) ? Math.round(dur * 1000) : null
     };
+    // Musik otomatis: kalau DM pilih lagu, langsung diputar bareng adegan biar suasana lebih dapet.
+    if (musicTrackId && session.music.tracks[musicTrackId]) {
+      session.music.playback.trackId = musicTrackId;
+      session.music.playback.position = 0;
+      session.music.playback.isPlaying = true;
+      session.music.playback.startTs = Date.now();
+      io.to('room-' + code).emit('music-state', session.music.playback);
+    }
     const logEntry = {
       id: genId('log'), from: 'Cerita',
       text: `📖 ${session.story.scene.title}${session.story.scene.desc ? ' — ' + session.story.scene.desc : ''}`,
@@ -2477,16 +2492,18 @@ io.on('connection', (socket) => {
   });
 
   // === Story: Dialog NPC (visual-novel style, tersiar ke semua player) ===
-  socket.on('dm:dialogue-say', ({ code, npcName, npcPortrait, text }, cb) => {
+  socket.on('dm:dialogue-say', ({ code, npcName, npcPortrait, text, mood }, cb) => {
     const session = sessions[code];
     if (!session) return cb && cb({ ok: false });
     if (socket.data.role !== 'dm') return cb && cb({ ok: false });
     ensureSessionDefaults(session);
     if (!text || !text.trim()) return cb && cb({ ok: false, error: 'Isi dialognya dulu.' });
+    const validMoods = ['netral','senang','marah','curiga','sedih','takut'];
     session.story.dialogue = {
       npcName: (npcName || 'NPC').trim() || 'NPC',
       npcPortrait: npcPortrait !== undefined ? npcPortrait : session.story.dialogue.npcPortrait,
-      text: text.trim(), active: true, updatedAt: Date.now()
+      text: text.trim(), active: true, updatedAt: Date.now(),
+      mood: validMoods.includes(mood) ? mood : 'netral'
     };
     const logEntry = {
       id: genId('log'), from: session.story.dialogue.npcName,
@@ -2522,7 +2539,9 @@ io.on('connection', (socket) => {
     const prevStatus = isExisting ? session.story.quests[id].status : null;
     const q = {
       id, title: quest.title.trim(), desc: (quest.desc || '').trim(),
-      status: quest.status || 'aktif', updatedAt: Date.now(),
+      status: quest.status || 'aktif',
+      priority: ['rendah','sedang','tinggi'].includes(quest.priority) ? quest.priority : 'sedang',
+      updatedAt: Date.now(),
       acceptedBy: isExisting ? (session.story.quests[id].acceptedBy || {}) : {},
       objectives: isExisting ? (session.story.quests[id].objectives || []) : []
     };
@@ -2674,7 +2693,8 @@ io.on('connection', (socket) => {
     const targetLabel = target ? (target.sheet.nama_karakter || target.name) : 'Semua Pemain';
     const logEntry = {
       id: genId('log'), from: 'DM', text: `🎁 Dokumen untuk ${targetLabel}: ${handout.title}`,
-      type: 'handout', ts: Date.now(), secret: false, imageUrl: handout.imageUrl, handoutText: handout.text
+      type: 'handout', ts: Date.now(), secret: false, imageUrl: handout.imageUrl,
+      handoutText: handout.text, handoutTitle: handout.title
     };
     session.log.push(logEntry);
     if (session.log.length > 300) session.log.shift();
@@ -2694,6 +2714,34 @@ io.on('connection', (socket) => {
     entry.starred = !!starred;
     saveSessionsDebounced(code);
     io.to('room-' + code).emit('chat:starred', { id, starred: entry.starred });
+  });
+
+  // === Story: Babak/Chapter — penanda pembagian sesi di Recap, biar riwayat cerita gak numpuk jadi satu ===
+  socket.on('dm:chapter-mark', ({ code, title }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    const t = (title || '').trim();
+    if (!t) return cb && cb({ ok: false, error: 'Isi nama babak.' });
+    const logEntry = { id: genId('log'), from: 'Babak', text: t, type: 'chapter', ts: Date.now(), secret: false };
+    session.log.push(logEntry);
+    if (session.log.length > 300) session.log.shift();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('chat:new', logEntry);
+    cb && cb({ ok: true });
+  });
+
+  // === Story: Ringkasan Sesi Lalu / cliffhanger — 1 paragraf pembuka yang tampil di tab Cerita player ===
+  socket.on('dm:recap-intro-set', ({ code, text }, cb) => {
+    const session = sessions[code];
+    if (!session) return cb && cb({ ok: false });
+    if (socket.data.role !== 'dm') return cb && cb({ ok: false });
+    ensureSessionDefaults(session);
+    session.story.recapIntro = (text || '').trim();
+    saveSessionsDebounced(code);
+    io.to('room-' + code).emit('recap-intro-updated', session.story.recapIntro);
+    cb && cb({ ok: true });
   });
 
   // === Chat & dice log bersama ===

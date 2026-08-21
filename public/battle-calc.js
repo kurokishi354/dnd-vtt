@@ -15,9 +15,16 @@
 (function () {
   let opts = null;
   let modalEl = null;
-  let activeTab = 'hit';
+  let activeTab = 'calc';
   let lastHit = null; // { crit: bool } dari roll to-hit terakhir, buat auto-double damage
   let diceHistory = [];
+
+  // ---- State kalkulator biasa (tambah/kurang/kali/bagi) ----
+  let calcDisplay = '0';
+  let calcExpr = '';
+  let calcPrev = null;
+  let calcOperator = null;
+  let calcWaitingOperand = false;
 
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,6 +55,15 @@
       table.bcalc-stats-table th { background:var(--gold); color:#fff; padding:5px 6px; text-align:left; font-family:'Cinzel',serif; font-weight:600; }
       table.bcalc-stats-table td { padding:4px 6px; border-bottom:1px solid rgba(220,190,120,.3); }
       table.bcalc-stats-table tr:nth-child(even) td { background: rgba(220,190,120,.08); }
+      .bcalc-calc-display { background:var(--navy); color:#f3ead2; font-size:28px; text-align:right; padding:14px 12px; border-radius:8px; margin-bottom:10px; font-family:'Courier New',monospace; overflow-x:auto; white-space:nowrap; }
+      .bcalc-calc-expr { font-size:12px; color:var(--gold-bright); opacity:.8; min-height:14px; }
+      .bcalc-calc-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+      .bcalc-calc-grid button { padding:14px 0; font-size:16px; border:1px solid var(--gold); border-radius:6px; background:var(--parchment-dark); cursor:pointer; font-family:'Cinzel',serif; color:var(--navy); }
+      .bcalc-calc-grid button:active { background:var(--gold); color:#fff; }
+      .bcalc-calc-grid button.bcalc-op { background:var(--gold); color:#fff; }
+      .bcalc-calc-grid button.bcalc-eq { background:var(--emerald); color:#fff; grid-row: span 2; }
+      .bcalc-calc-grid button.bcalc-clear { background:var(--crimson); color:#fff; }
+      .bcalc-calc-grid button.bcalc-zero { grid-column: span 2; }
     `;
     document.head.appendChild(style);
   }
@@ -61,11 +77,12 @@
     backdrop.innerHTML = `
       <div class="modal-box bcalc-box">
         <div class="row" style="justify-content:space-between; align-items:center; margin:0;">
-          <h2 style="margin:0;">🧮 Kalkulator Battle</h2>
+          <h2 style="margin:0;">🧮 Kalkulator</h2>
           <button type="button" class="small secondary" id="bcalcCloseBtn">✖ Tutup</button>
         </div>
-        <p class="hint" style="margin:2px 0 0;">Alat bantu hitung manual — gak langsung ubah HP/MP/SP siapa pun kecuali kamu pilih "Isi ke Aksi Roll".</p>
+        <p class="hint" style="margin:2px 0 0;">Kalkulator biasa (tambah/kurang/kali/bagi) plus alat bantu battle — gak langsung ubah HP/MP/SP siapa pun kecuali kamu pilih "Isi ke Aksi Roll".</p>
         <div class="bcalc-tabs">
+          <button type="button" class="bcalc-tab" data-bctab="calc">➗ Kalkulator</button>
           <button type="button" class="bcalc-tab" data-bctab="hit">🎯 To-Hit &amp; Damage</button>
           <button type="button" class="bcalc-tab" data-bctab="dice">🎲 Dice Cepat</button>
           <button type="button" class="bcalc-tab" data-bctab="stats">📊 Statistik</button>
@@ -118,6 +135,109 @@
       }
     });
     return { total, detail: parts.join(' ') || String(total) };
+  }
+
+  // ---------- Tab 0: Kalkulator biasa (tambah/kurang/kali/bagi) ----------
+  function calcFormatNum(n) {
+    if (!isFinite(n)) return 'Error';
+    // Batasi presisi biar gak kepanjangan (mis. 0.1+0.2 floating point junk), tapi tetap tampil angka bulat apa adanya.
+    const rounded = Math.round(n * 1e10) / 1e10;
+    return String(rounded);
+  }
+  function calcOpSymbol(op) { return op === '+' ? '+' : op === '-' ? '−' : op === '*' ? '×' : op === '/' ? '÷' : ''; }
+  function calcCompute(a, b, op) {
+    switch (op) {
+      case '+': return a + b;
+      case '-': return a - b;
+      case '*': return a * b;
+      case '/': return b === 0 ? NaN : a / b;
+      default: return b;
+    }
+  }
+  function renderCalcTab() {
+    return `
+      <div class="bcalc-calc-expr" id="bcalcCalcExpr">${escapeHtml(calcExpr)}</div>
+      <div class="bcalc-calc-display" id="bcalcCalcDisplay">${escapeHtml(calcDisplay)}</div>
+      <div class="bcalc-calc-grid">
+        <button type="button" class="bcalc-clear" data-calc="clear">C</button>
+        <button type="button" data-calc="backspace">⌫</button>
+        <button type="button" data-calc="sign">±</button>
+        <button type="button" class="bcalc-op" data-calc="op" data-op="/">÷</button>
+
+        <button type="button" data-calc="digit" data-d="7">7</button>
+        <button type="button" data-calc="digit" data-d="8">8</button>
+        <button type="button" data-calc="digit" data-d="9">9</button>
+        <button type="button" class="bcalc-op" data-calc="op" data-op="*">×</button>
+
+        <button type="button" data-calc="digit" data-d="4">4</button>
+        <button type="button" data-calc="digit" data-d="5">5</button>
+        <button type="button" data-calc="digit" data-d="6">6</button>
+        <button type="button" class="bcalc-op" data-calc="op" data-op="-">−</button>
+
+        <button type="button" data-calc="digit" data-d="1">1</button>
+        <button type="button" data-calc="digit" data-d="2">2</button>
+        <button type="button" data-calc="digit" data-d="3">3</button>
+        <button type="button" class="bcalc-op" data-calc="op" data-op="+">+</button>
+
+        <button type="button" class="bcalc-zero" data-calc="digit" data-d="0">0</button>
+        <button type="button" data-calc="decimal">,</button>
+        <button type="button" class="bcalc-eq" data-calc="equals">=</button>
+      </div>
+      <p class="hint" style="margin-top:8px;">Kalkulator biasa buat hitung cepat (mis. bagi loot, hitung XP, konversi harga) — gak nyambung ke fitur battle apa pun.</p>
+    `;
+  }
+  function calcRefreshDisplay() {
+    document.getElementById('bcalcCalcDisplay').textContent = calcDisplay;
+    document.getElementById('bcalcCalcExpr').textContent = calcExpr;
+  }
+  function wireCalcTab() {
+    const pane = document.getElementById('bcalcPane');
+    pane.querySelectorAll('[data-calc]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.calc;
+        if (action === 'digit') {
+          const d = btn.dataset.d;
+          if (calcWaitingOperand || calcDisplay === '0') { calcDisplay = d; calcWaitingOperand = false; }
+          else if (calcDisplay.replace('-', '').length < 15) { calcDisplay += d; }
+        } else if (action === 'decimal') {
+          if (calcWaitingOperand) { calcDisplay = '0,'; calcWaitingOperand = false; }
+          else if (!calcDisplay.includes(',')) calcDisplay += ',';
+        } else if (action === 'sign') {
+          if (calcDisplay !== '0') calcDisplay = calcDisplay.startsWith('-') ? calcDisplay.slice(1) : '-' + calcDisplay;
+        } else if (action === 'backspace') {
+          calcDisplay = calcDisplay.length > 1 ? calcDisplay.slice(0, -1) : '0';
+        } else if (action === 'clear') {
+          calcDisplay = '0'; calcExpr = ''; calcPrev = null; calcOperator = null; calcWaitingOperand = false;
+        } else if (action === 'op') {
+          const inputVal = parseFloat(calcDisplay.replace(',', '.'));
+          if (calcOperator && calcWaitingOperand) {
+            // ganti operator kalau user klik operator 2x berturut-turut
+            calcOperator = btn.dataset.op;
+            calcExpr = `${calcFormatNum(calcPrev).replace('.', ',')} ${calcOpSymbol(calcOperator)}`;
+            calcRefreshDisplay();
+            return;
+          }
+          if (calcPrev === null) { calcPrev = inputVal; }
+          else if (calcOperator) {
+            const result = calcCompute(calcPrev, inputVal, calcOperator);
+            calcPrev = result;
+            calcDisplay = calcFormatNum(result).replace('.', ',');
+          }
+          calcOperator = btn.dataset.op;
+          calcExpr = `${calcDisplay} ${calcOpSymbol(calcOperator)}`;
+          calcWaitingOperand = true;
+        } else if (action === 'equals') {
+          const inputVal = parseFloat(calcDisplay.replace(',', '.'));
+          if (calcOperator !== null && calcPrev !== null) {
+            calcExpr = `${calcFormatNum(calcPrev).replace('.', ',')} ${calcOpSymbol(calcOperator)} ${calcDisplay} =`;
+            const result = calcCompute(calcPrev, inputVal, calcOperator);
+            calcDisplay = calcFormatNum(result).replace('.', ',');
+            calcPrev = null; calcOperator = null; calcWaitingOperand = true;
+          }
+        }
+        calcRefreshDisplay();
+      });
+    });
   }
 
   // ---------- Tab 1: To-Hit & Damage ----------
@@ -337,7 +457,8 @@
     if (!modalEl) return;
     setActiveTabButtons();
     const pane = document.getElementById('bcalcPane');
-    if (activeTab === 'hit') { pane.innerHTML = renderHitTab(); wireHitTab(); }
+    if (activeTab === 'calc') { pane.innerHTML = renderCalcTab(); wireCalcTab(); }
+    else if (activeTab === 'hit') { pane.innerHTML = renderHitTab(); wireHitTab(); }
     else if (activeTab === 'dice') { pane.innerHTML = renderDiceTab(); wireDiceTab(); }
     else { pane.innerHTML = renderStatsTab(); wireStatsTab(); }
   }

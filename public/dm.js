@@ -1640,7 +1640,7 @@ document.getElementById('btnBattlePrev').onclick = () => socket.emit('dm:battle-
 document.getElementById('btnBattleClear').onclick = () => { if (confirm('Bersihkan battle?')) socket.emit('dm:battle-clear', { code: CODE }); };
 
 // =============================== MUSIK ================================
-socket.on('music-updated', (tracks) => { state.music.tracks = tracks; renderMusic(); syncMusicPlayer(); });
+socket.on('music-updated', (tracks) => { state.music.tracks = tracks; renderMusic(); syncMusicPlayer(); populateSceneMusicSelect(); });
 socket.on('music-state', (playback) => { state.music.playback = playback; renderMusic(); syncMusicPlayer(); });
 
 const dmMusicPlayer = document.getElementById('musicPlayer');
@@ -1745,14 +1745,14 @@ socket.on('chat:revealed', (entry) => {
   renderLog();
 });
 
-const STORY_LOG_TYPES = ['narrative','scene','dialogue','quest','handout'];
+const STORY_LOG_TYPES = ['narrative','scene','dialogue','quest','handout','chapter'];
 // Log & Dice muncul di 2 tempat (tab Utama & tab Battle) — sama persis datanya, jadi render ke semua
 // box yang ada di halaman (kalau salah satu gak ada, misal tab Battle belum ke-render, otomatis dilewati).
 const CHAT_LOG_BOX_IDS = ['chatLog', 'battleChatLog'];
 function renderLog() {
   const html = state.log.map(e => {
     let cls;
-    if (STORY_LOG_TYPES.includes(e.type)) cls = e.type === 'quest' ? 'quest' : (e.type === 'handout' ? 'handout' : (e.type === 'dialogue' ? 'dialogue' : 'narrative'));
+    if (STORY_LOG_TYPES.includes(e.type)) cls = e.type === 'quest' ? 'quest' : (e.type === 'handout' ? 'handout' : (e.type === 'dialogue' ? 'dialogue' : (e.type === 'chapter' ? 'chapter' : 'narrative')));
     else if (e.type==='whisper') cls='whisper';
     else if (e.from==='DM'||e.from==='dm') cls='dm';
     else if (e.from==='Sistema'||e.from==='system'||e.type==='system') cls='system';
@@ -2063,7 +2063,11 @@ function renderStoryStatusBadges() {
   const scene = (state.story && state.story.scene) || {};
   const dlg = (state.story && state.story.dialogue) || {};
   const sBadge = document.getElementById('sceneStatusBadge');
-  if (sBadge) { sBadge.textContent = scene.active ? 'tampil' : 'tidak aktif'; sBadge.classList.toggle('active', !!scene.active); }
+  if (sBadge) {
+    const durTxt = scene.active && scene.duration ? ` (auto ${Math.round(scene.duration/1000)}d)` : '';
+    sBadge.textContent = (scene.active ? 'tampil' : 'tidak aktif') + durTxt;
+    sBadge.classList.toggle('active', !!scene.active);
+  }
   const dBadge = document.getElementById('dialogueStatusBadge');
   if (dBadge) { dBadge.textContent = dlg.active ? 'tampil' : 'tidak aktif'; dBadge.classList.toggle('active', !!dlg.active); }
 }
@@ -2072,9 +2076,36 @@ function renderStory() {
   renderStoryStatusBadges();
   populateDialogueNpcSelect();
   populateHandoutTargetSelect();
+  populateSceneMusicSelect();
   renderQuestList();
   renderStoryRecap();
+  renderDialogueHistory();
+  renderHandoutHistory();
+  const introEl = document.getElementById('recapIntroText');
+  if (introEl && document.activeElement !== introEl) introEl.value = (state.story && state.story.recapIntro) || '';
 }
+
+document.getElementById('btnChapterMark').onclick = () => {
+  const input = document.getElementById('chapterTitleInput');
+  const title = input.value.trim();
+  if (!title) return alert('Isi nama babaknya dulu.');
+  socket.emit('dm:chapter-mark', { code: CODE, title }, (res) => {
+    if (!res?.ok) alert(res?.error || 'Gagal menandai babak.');
+    else input.value = '';
+  });
+};
+document.getElementById('btnRecapIntroSave').onclick = () => {
+  const text = document.getElementById('recapIntroText').value.trim();
+  socket.emit('dm:recap-intro-set', { code: CODE, text }, (res) => {
+    if (!res?.ok) alert(res?.error || 'Gagal menyimpan ringkasan.');
+  });
+};
+socket.on('recap-intro-updated', (text) => {
+  state.story = state.story || {};
+  state.story.recapIntro = text;
+  const introEl = document.getElementById('recapIntroText');
+  if (introEl && document.activeElement !== introEl) introEl.value = text || '';
+});
 
 function populateDialogueNpcSelect() {
   const sel = document.getElementById('dialogue_npcPick'); if (!sel) return;
@@ -2121,10 +2152,20 @@ document.getElementById('btnSceneShow').onclick = () => {
   const title = document.getElementById('scene_title').value.trim();
   if (!title) return alert('Isi judul adegan dulu.');
   const desc = document.getElementById('scene_desc').value.trim();
-  socket.emit('dm:scene-set', { code: CODE, title, desc, imageUrl: sceneImageData !== null ? sceneImageData : undefined }, (res) => {
+  const duration = document.getElementById('scene_duration').value;
+  const musicTrackId = document.getElementById('scene_musicTrack').value || undefined;
+  socket.emit('dm:scene-set', { code: CODE, title, desc, imageUrl: sceneImageData !== null ? sceneImageData : undefined, duration: duration ? Number(duration) : null, musicTrackId }, (res) => {
     if (!res?.ok) alert(res?.error || 'Gagal menampilkan adegan.');
   });
 };
+function populateSceneMusicSelect() {
+  const sel = document.getElementById('scene_musicTrack'); if (!sel) return;
+  const prev = sel.value;
+  const tracks = Object.values((state.music && state.music.tracks) || {});
+  sel.innerHTML = '<option value="">— Tidak putar musik —</option>' +
+    tracks.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  if (tracks.some(t => t.id === prev)) sel.value = prev;
+}
 document.getElementById('btnSceneHide').onclick = () => socket.emit('dm:scene-clear', { code: CODE });
 socket.on('scene-updated', (scene) => { state.story = state.story || {}; state.story.scene = scene; renderStoryStatusBadges(); });
 
@@ -2145,7 +2186,8 @@ document.getElementById('btnDialogueSay').onclick = () => {
   const text = document.getElementById('dialogue_text').value.trim();
   if (!text) return alert('Isi dialognya dulu.');
   const npcName = document.getElementById('dialogue_name').value.trim() || 'NPC';
-  socket.emit('dm:dialogue-say', { code: CODE, npcName, npcPortrait: dialoguePortraitData !== null ? dialoguePortraitData : undefined, text }, (res) => {
+  const mood = document.getElementById('dialogue_mood').value || 'netral';
+  socket.emit('dm:dialogue-say', { code: CODE, npcName, npcPortrait: dialoguePortraitData !== null ? dialoguePortraitData : undefined, text, mood }, (res) => {
     if (!res?.ok) alert(res?.error || 'Gagal mengirim dialog.');
     else document.getElementById('dialogue_text').value = '';
   });
@@ -2153,12 +2195,63 @@ document.getElementById('btnDialogueSay').onclick = () => {
 document.getElementById('btnDialogueHide').onclick = () => socket.emit('dm:dialogue-clear', { code: CODE });
 socket.on('dialogue-updated', (dialogue) => { state.story = state.story || {}; state.story.dialogue = dialogue; renderStoryStatusBadges(); });
 
+// ---- Riwayat Dialog terakhir (biar bisa cepat "pakai lagi") ----
+function renderDialogueHistory() {
+  const box = document.getElementById('dialogueHistoryList'); if (!box) return;
+  const entries = state.log.filter(e => e.type === 'dialogue').sort((a,b) => (b.ts||0)-(a.ts||0)).slice(0, 5);
+  if (!entries.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<p class="hint" style="margin:6px 0 2px;">Riwayat terakhir:</p>' + entries.map(e => `
+    <div class="story-history-item">
+      <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><b>${escapeHtml(e.from)}:</b> ${escapeHtml((e.text||'').replace(/^💬\s*/,''))}</span>
+      <button type="button" class="small secondary dlg-reuse-btn" data-id="${e.id}" style="flex-shrink:0;">↻ Pakai lagi</button>
+    </div>`).join('');
+  box.querySelectorAll('.dlg-reuse-btn').forEach(btn => {
+    btn.onclick = () => {
+      const entry = entries.find(e => e.id === btn.dataset.id); if (!entry) return;
+      document.getElementById('dialogue_name').value = entry.from || '';
+      document.getElementById('dialogue_text').value = (entry.text || '').replace(/^💬\s*/, '');
+    };
+  });
+}
+
+// ---- Riwayat Handout terakhir ----
+function renderHandoutHistory() {
+  const box = document.getElementById('handoutHistoryList'); if (!box) return;
+  const entries = state.log.filter(e => e.type === 'handout').sort((a,b) => (b.ts||0)-(a.ts||0)).slice(0, 5);
+  if (!entries.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<p class="hint" style="margin:6px 0 2px;">Riwayat terakhir:</p>' + entries.map(e => `
+    <div class="story-history-item">
+      <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(e.handoutTitle || e.text)}</span>
+      <button type="button" class="small secondary ho-reuse-btn" data-id="${e.id}" style="flex-shrink:0;">↻ Kirim lagi</button>
+    </div>`).join('');
+  box.querySelectorAll('.ho-reuse-btn').forEach(btn => {
+    btn.onclick = () => {
+      const entry = entries.find(e => e.id === btn.dataset.id); if (!entry) return;
+      document.getElementById('handout_title').value = entry.handoutTitle || '';
+      document.getElementById('handout_text').value = entry.handoutText || '';
+      if (entry.imageUrl) {
+        handoutImageData = entry.imageUrl;
+        const img = document.getElementById('handoutPreviewImg'); img.src = entry.imageUrl; img.style.display = '';
+      }
+    };
+  });
+}
+
 // ---- Quest Tracker ----
+const QUEST_PRIORITY_RANK = { tinggi: 2, sedang: 1, rendah: 0 };
+const QUEST_PRIORITY_LABEL = { tinggi: '⬆ Tinggi', sedang: '➡ Sedang', rendah: '⬇ Rendah' };
 function renderQuestList() {
   const box = document.getElementById('questList'); if (!box) return;
-  const quests = Object.values((state.story && state.story.quests) || {}).sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
+  const quests = Object.values((state.story && state.story.quests) || {}).sort((a,b) => {
+    const statusRank = (s) => s === 'aktif' ? 1 : 0; // quest aktif tampil di atas quest selesai/gagal
+    if (statusRank(b.status) !== statusRank(a.status)) return statusRank(b.status) - statusRank(a.status);
+    const pr = (QUEST_PRIORITY_RANK[b.priority] ?? 1) - (QUEST_PRIORITY_RANK[a.priority] ?? 1);
+    if (pr !== 0) return pr;
+    return (b.updatedAt||0)-(a.updatedAt||0);
+  });
   if (!quests.length) { box.innerHTML = '<p class="hint">Belum ada quest.</p>'; return; }
   box.innerHTML = quests.map(q => {
+    const priority = q.priority || 'sedang';
     const accepted = Object.values(q.acceptedBy || {});
     const acceptedLine = accepted.length
       ? `<div class="quest-card-desc" style="margin-top:4px;">🙋 ${accepted.map(a => `${escapeHtml(a.name)}${a.completed ? ' ✅' : ''}`).join(', ')}</div>`
@@ -2176,7 +2269,7 @@ function renderQuestList() {
     return `
     <div class="quest-card" data-id="${q.id}">
       <div class="quest-card-top">
-        <span class="quest-card-title">${escapeHtml(q.title)}</span>
+        <span class="quest-card-title"><span class="quest-priority-badge ${priority}">${QUEST_PRIORITY_LABEL[priority]}</span>${escapeHtml(q.title)}</span>
         <span class="quest-status-badge ${q.status}">${q.status === 'aktif' ? '🟡 Aktif' : q.status === 'selesai' ? '✅ Selesai' : '❌ Gagal'}</span>
       </div>
       ${q.desc ? `<div class="quest-card-desc">${escapeHtml(q.desc)}</div>` : ''}
@@ -2216,6 +2309,7 @@ function loadQuestToForm(q) {
   document.getElementById('quest_title').value = q?.title || '';
   document.getElementById('quest_desc').value = q?.desc || '';
   document.getElementById('quest_status').value = q?.status || 'aktif';
+  document.getElementById('quest_priority').value = q?.priority || 'sedang';
 }
 document.getElementById('btnQuestResetForm').onclick = () => loadQuestToForm(null);
 document.getElementById('btnQuestSave').onclick = () => {
@@ -2224,7 +2318,8 @@ document.getElementById('btnQuestSave').onclick = () => {
   const quest = {
     id: document.getElementById('quest_id').value || undefined,
     title, desc: document.getElementById('quest_desc').value.trim(),
-    status: document.getElementById('quest_status').value
+    status: document.getElementById('quest_status').value,
+    priority: document.getElementById('quest_priority').value
   };
   socket.emit('dm:quest-save', { code: CODE, quest }, (res) => {
     if (!res?.ok) alert(res?.error || 'Gagal menyimpan quest.');
@@ -2262,12 +2357,25 @@ document.getElementById('btnHandoutSend').onclick = () => {
 };
 
 // ---- Recap (adegan/dialog/quest/handout + entri log yang di-⭐) ----
+let storyRecapFilter = 'semua';
+document.querySelectorAll('#storyRecapFilter button').forEach(btn => {
+  btn.onclick = () => {
+    storyRecapFilter = btn.dataset.filter;
+    document.querySelectorAll('#storyRecapFilter button').forEach(b => b.classList.toggle('active', b === btn));
+    renderStoryRecap();
+  };
+});
 function renderStoryRecap() {
   const box = document.getElementById('storyRecapList'); if (!box) return;
-  const entries = state.log.filter(e => STORY_LOG_TYPES.includes(e.type) || e.starred).sort((a,b) => (a.ts||0)-(b.ts||0));
+  const all = state.log.filter(e => STORY_LOG_TYPES.includes(e.type) || e.starred).sort((a,b) => (a.ts||0)-(b.ts||0));
+  // Babak selalu ditampilkan sebagai divider (kecuali filter "Babak" doang, atau filter lain tapi kita tetap
+  // butuh konteks babak-nya) — jadi kalau filter aktif bukan 'semua'/'chapter', tetap selipkan header babak.
+  const entries = storyRecapFilter === 'semua' ? all
+    : all.filter(e => e.type === storyRecapFilter || e.type === 'chapter');
   if (!entries.length) { box.innerHTML = '<p class="hint">Belum ada momen cerita.</p>'; return; }
-  box.innerHTML = entries.map(e => `
-    <div class="story-recap-entry">
+  box.innerHTML = entries.map(e => e.type === 'chapter'
+    ? `<div class="story-recap-chapter">🏷 ${escapeHtml(e.text)}</div>`
+    : `<div class="story-recap-entry">
       <span class="from">${escapeHtml(e.from)}:</span> ${escapeHtml(e.text)}
       ${e.ts ? `<span class="ts">${new Date(e.ts).toLocaleString()}</span>` : ''}
     </div>`).join('');
